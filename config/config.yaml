@@ -1,0 +1,41 @@
+# 服务监听配置
+server:
+  # HTTP 服务绑定地址
+  host: "127.0.0.1"
+  # HTTP 服务端口
+  port: 8080
+  # Gin 运行模式，可选：debug、release、test
+  mode: "debug"
+
+# 数据库配置
+database:
+  # SQLite 数据库文件路径
+  path: "./data/qzone.db"
+  # 连接池最大空闲连接数
+  max_idle_conn: 10
+  # 连接池最大打开连接数
+  max_open_conn: 100
+  # GORM SQL 日志级别，可选：silent、error、warn、info
+  log_level: "silent"
+
+# QQ 空间相关配置
+qzone:
+  # 登录二维码有效等待时长，单位：秒
+  login_timeout: 300
+
+# 应用日志配置
+log:
+  # 应用日志级别，可选：debug、info、warn、error
+  level: "info"
+  # 日志输出格式，可选：json、console
+  format: "console"
+  # 日志输出目录
+  output_dir: "./logs"
+  # 日志文件名
+  file_name: "app.log"
+  # 单个日志文件最大大小，单位：MB
+  max_size: 100
+  # 日志保留天数
+  max_age: 30
+  # 最多保留的历史日志文件数量
+  max_backups: 10
