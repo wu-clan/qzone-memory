@@ -70,6 +70,13 @@ func parseGormLogLevel(level string) logger.LogLevel {
 func autoMigrate() error {
 	return DB.AutoMigrate(
 		&model.User{},
+		&model.Activity{},
+		&model.FriendGroup{},
+		&model.Friend{},
+		&model.Visitor{},
+		&model.Video{},
+		&model.Favorite{},
+		&model.Diary{},
 		&model.Talk{},
 		&model.Blog{},
 		&model.Album{},

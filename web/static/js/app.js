@@ -2,7 +2,8 @@
 const app = {
   qq: "",
   nickname: "",
-  currentTab: "all",
+  currentView: "memories",
+  currentMemoryFilter: "all",
   loginMode: "qr",
   pollTimer: null,
   syncTimer: null,
@@ -17,42 +18,24 @@ const app = {
   albumPhotoPage: 1,
   lightboxImages: [],
   lightboxIndex: 0,
-  tabMeta: {
-    all: {
-      title: "内容总览",
-      description: "按时间顺序查看当前账号下的内容与互动记录",
-      emptyTitle: "暂无内容",
-      emptyDescription: "当前没有可展示的数据，请先执行同步",
+  infiniteObserver: null,
+  friendSearch: "",
+  friendFilter: "all",
+  lastTimelineGroup: "",
+  viewMeta: {
+    memories: {
+      kicker: "回忆时间线",
+      title: "完整回忆",
+      description: "按时间顺序回看 QQ 空间现有内容、历史动态和已删除痕迹",
+      emptyTitle: "暂无回忆内容",
+      emptyDescription: "当前还没有可展示的归档数据，请先执行同步",
     },
-    talks: {
-      title: "说说",
-      description: "查看说说内容、配图和互动数据",
-      emptyTitle: "暂无说说记录",
-      emptyDescription: "当前分类暂无数据，可稍后重新同步",
-    },
-    blogs: {
-      title: "日志",
-      description: "查看日志内容、摘要和基础信息",
-      emptyTitle: "暂无日志记录",
-      emptyDescription: "当前分类暂无数据，可稍后重新同步",
-    },
-    albums: {
-      title: "相册",
-      description: "查看相册列表、照片数量和相关内容",
-      emptyTitle: "暂无相册记录",
-      emptyDescription: "当前分类暂无数据，可稍后重新同步",
-    },
-    messages: {
-      title: "留言板",
-      description: "查看留言内容和互动记录",
-      emptyTitle: "暂无留言记录",
-      emptyDescription: "当前分类暂无数据，可稍后重新同步",
-    },
-    mentions: {
-      title: "@提到我",
-      description: "查看与当前账号相关的提及和互动",
-      emptyTitle: "暂无提及记录",
-      emptyDescription: "当前分类暂无数据，可稍后重新同步",
+    friends: {
+      kicker: "好友关系",
+      title: "好友与历史联系人",
+      description: "查看当前好友、分组、特别关心，以及由历史互动反推的旧联系人",
+      emptyTitle: "暂无好友数据",
+      emptyDescription: "当前还没有可展示的好友或历史联系人数据，请先执行同步",
     },
   },
 
@@ -304,12 +287,27 @@ const app = {
     this.page = 1;
     this.closeAlbumDetail();
     const timeline = document.getElementById("timeline");
+    const friendsView = document.getElementById("friends-view");
     const empty = document.getElementById("empty-state");
     const loadMore = document.getElementById("load-more");
 
     timeline.classList.add("hidden");
+    friendsView.classList.add("hidden");
     empty.classList.add("hidden");
     loadMore.classList.add("hidden");
+    document.getElementById("memory-filters").classList.toggle(
+      "hidden",
+      this.currentView !== "memories",
+    );
+    document.getElementById("memory-summary").classList.toggle(
+      "hidden",
+      this.currentView !== "memories",
+    );
+    document.getElementById("friend-toolbar").classList.toggle(
+      "hidden",
+      this.currentView !== "friends",
+    );
+    this.updateContentHead();
     this.updateSyncStatus("检查中", "正在确认是否存在进行中的同步任务");
     this.setSyncButtonState(false);
 
@@ -325,60 +323,55 @@ const app = {
       this.updateSyncStatus("状态未知", "暂时无法获取同步任务状态");
     }
 
-    // 加载当前 tab 的数据
-    const items = await this.fetchCurrentTabData();
+    const payload = await this.fetchCurrentViewData();
+    const items = Array.isArray(payload) ? payload : payload?.list || [];
 
     if (!items || items.length === 0) {
       empty.classList.remove("hidden");
       this.updateEmptyState();
     } else {
-      this.renderTimeline(items);
-      timeline.classList.remove("hidden");
-      if (items.length >= this.pageSize) {
-        loadMore.classList.remove("hidden");
+      if (this.currentView === "friends") {
+        this.renderFriends(payload);
+        friendsView.classList.remove("hidden");
+      } else {
+        this.renderTimeline(items);
+        timeline.classList.remove("hidden");
+        if (items.length >= this.pageSize) {
+          loadMore.classList.remove("hidden");
+        }
+        this.setupInfiniteLoad();
       }
     }
 
     this.loadCounts();
+    if (this.currentView === "memories") {
+      this.loadMemoryStats();
+    }
   },
 
-  async fetchCurrentTabData() {
-    const tab = this.currentTab;
+  async fetchCurrentViewData() {
     const qq = this.qq;
     const p = this.page;
     const ps = this.pageSize;
 
     let url = "";
-    switch (tab) {
-      case "all":
-      case "talks":
-        url = `/api/v1/talks?qq=${qq}&page=${p}&page_size=${ps}`;
-        break;
-      case "blogs":
-        url = `/api/v1/blogs?qq=${qq}&page=${p}&page_size=${ps}`;
-        break;
-      case "albums":
-        url = `/api/v1/albums?qq=${qq}&page=${p}&page_size=${ps}`;
-        break;
-      case "messages":
-        url = `/api/v1/messages?qq=${qq}&page=${p}&page_size=${ps}`;
-        break;
-      case "mentions":
-        url = `/api/v1/mentions?qq=${qq}&page=${p}&page_size=${ps}`;
-        break;
+    if (this.currentView === "friends") {
+      url = `/api/v1/friends?qq=${qq}&include_deleted=true&page=${p}&page_size=${ps}`;
+    } else {
+      url = `/api/v1/memory/timeline?qq=${qq}&type=${encodeURIComponent(this.currentMemoryFilter)}&page=${p}&page_size=${ps}`;
     }
 
     try {
       const res = await this.api(url);
-      if (res.code === 0 && res.data && res.data.list) {
-        return res.data.list;
-      }
+      if (res.code !== 0 || !res.data) return this.currentView === "friends" ? null : [];
+      if (this.currentView === "friends") return res.data;
+      return res.data.list || [];
     } catch {}
-    return [];
+    return this.currentView === "friends" ? null : [];
   },
 
   async loadMore() {
-    if (this.loading) return;
+    if (this.loading || this.currentView !== "memories") return;
     this.loading = true;
     const loadMoreBtn = document.querySelector("#load-more .btn");
     if (loadMoreBtn) {
@@ -387,7 +380,7 @@ const app = {
     }
     this.page++;
 
-    const items = await this.fetchCurrentTabData();
+    const items = await this.fetchCurrentViewData();
     if (items && items.length > 0) {
       this.appendTimeline(items);
       if (items.length < this.pageSize) {
@@ -396,6 +389,7 @@ const app = {
     } else {
       document.getElementById("load-more").classList.add("hidden");
     }
+    this.setupInfiniteLoad();
     if (loadMoreBtn) {
       loadMoreBtn.disabled = false;
       loadMoreBtn.textContent = "加载更多";
@@ -404,48 +398,73 @@ const app = {
   },
 
   async loadCounts() {
-    const types = ["talks", "blogs", "albums", "messages", "mentions"];
-    let total = 0;
-    for (const t of types) {
-      try {
-        let url = "";
-        switch (t) {
-          case "talks":
-            url = `/api/v1/talks?qq=${this.qq}&page=1&page_size=1`;
-            break;
-          case "blogs":
-            url = `/api/v1/blogs?qq=${this.qq}&page=1&page_size=1`;
-            break;
-          case "albums":
-            url = `/api/v1/albums?qq=${this.qq}&page=1&page_size=1`;
-            break;
-          case "messages":
-            url = `/api/v1/messages?qq=${this.qq}&page=1&page_size=1`;
-            break;
-          case "mentions":
-            url = `/api/v1/mentions?qq=${this.qq}&page=1&page_size=1`;
-            break;
-        }
-        const res = await this.api(url);
-        const count = res.code === 0 && res.data ? res.data.total || 0 : 0;
-        const el = document.getElementById(`count-${t}`);
-        if (el) el.textContent = count > 0 ? count : "";
-        total += count;
-      } catch {}
-    }
-    const allEl = document.getElementById("count-all");
-    if (allEl) allEl.textContent = total > 0 ? total : "";
-    this.updateOverviewStats(total);
+    let memoryCount = 0;
+    let friendCount = 0;
+    try {
+      const memoryRes = await this.api(`/api/v1/memory/timeline?qq=${this.qq}&page=1&page_size=1`);
+      memoryCount = memoryRes.code === 0 && memoryRes.data ? memoryRes.data.total || 0 : 0;
+    } catch {}
+    try {
+      const friendRes = await this.api(`/api/v1/friends?qq=${this.qq}&include_deleted=true&page=1&page_size=1`);
+      friendCount = friendRes.code === 0 && friendRes.data ? friendRes.data.total || 0 : 0;
+    } catch {}
+
+    const memoriesEl = document.getElementById("count-memories");
+    const friendsEl = document.getElementById("count-friends");
+    if (memoriesEl) memoriesEl.textContent = memoryCount > 0 ? memoryCount : "";
+    if (friendsEl) friendsEl.textContent = friendCount > 0 ? friendCount : "";
+    this.updateOverviewStats(memoryCount + friendCount);
   },
 
-  switchTab(tab, event) {
+  async loadMemoryStats() {
+    try {
+      const res = await this.api(`/api/v1/memory/stats?qq=${this.qq}`);
+      if (res.code !== 0 || !res.data) return;
+      const data = res.data;
+      const years = (data.by_year || [])
+        .slice(0, 4)
+        .map((item) => `<span>${item.year} · ${item.count}</span>`)
+        .join("");
+      const types = Object.entries(data.by_type || {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([type, count]) => `<span>${this.escapeHtml(type)} ${count}</span>`)
+        .join("");
+      document.getElementById("memory-summary").innerHTML = `
+        <div class="memory-summary-card">
+          <span class="memory-summary-label">归档总量</span>
+          <strong>${data.total || 0}</strong>
+        </div>
+        <div class="memory-summary-card">
+          <span class="memory-summary-label">年份分布</span>
+          <div class="memory-summary-tags">${years || "<span>暂无</span>"}</div>
+        </div>
+        <div class="memory-summary-card">
+          <span class="memory-summary-label">内容构成</span>
+          <div class="memory-summary-tags">${types || "<span>暂无</span>"}</div>
+        </div>
+      `;
+    } catch {}
+  },
+
+  switchView(view, event) {
     if (event) event.preventDefault();
     document
       .querySelectorAll(".nav-item")
       .forEach((el) => el.classList.remove("active"));
-    const clicked = document.querySelector(`.nav-item[data-type="${tab}"]`);
+    const clicked = document.querySelector(`.nav-item[data-view="${view}"]`);
     if (clicked) clicked.classList.add("active");
-    this.currentTab = tab;
+    this.currentView = view;
+    this.page = 1;
+    this.loadData();
+  },
+
+  switchMemoryFilter(filter, event) {
+    if (event) event.preventDefault();
+    this.currentMemoryFilter = filter;
+    document
+      .querySelectorAll("#memory-filters .filter-chip")
+      .forEach((el) => el.classList.toggle("active", el.dataset.filter === filter));
     this.loadData();
   },
 
@@ -453,16 +472,50 @@ const app = {
   renderTimeline(items) {
     const container = document.getElementById("timeline");
     container.innerHTML = "";
-    items.forEach((item) =>
-      container.appendChild(this.createTimelineItem(item)),
-    );
+    let currentGroup = "";
+    items.forEach((item) => {
+      const group = this.formatTimelineGroup(
+        item.publish_time ||
+          item.message_time ||
+          item.mention_time ||
+          item.create_time ||
+          item.created_at,
+      );
+      if (group !== currentGroup) {
+        currentGroup = group;
+        container.appendChild(this.createTimelineGroup(group));
+      }
+      container.appendChild(this.createTimelineItem(item));
+    });
+    this.lastTimelineGroup = currentGroup;
   },
 
   appendTimeline(items) {
     const container = document.getElementById("timeline");
-    items.forEach((item) =>
-      container.appendChild(this.createTimelineItem(item)),
-    );
+    let lastGroup = this.lastTimelineGroup || "";
+    items.forEach((item) => {
+      const group = this.formatTimelineGroup(
+        item.publish_time ||
+          item.message_time ||
+          item.mention_time ||
+          item.create_time ||
+          item.created_at,
+      );
+      if (group !== lastGroup) {
+        lastGroup = group;
+        container.appendChild(this.createTimelineGroup(group));
+      }
+      container.appendChild(this.createTimelineItem(item));
+    });
+    this.lastTimelineGroup = lastGroup;
+  },
+
+  createTimelineGroup(label) {
+    const div = document.createElement("div");
+    div.className = "timeline-group";
+    div.dataset.group = label;
+    div.innerHTML = `<span>${this.escapeHtml(label)}</span>`;
+    return div;
   },
 
   createTimelineItem(item) {
@@ -471,11 +524,19 @@ const app = {
 
     const type = this.detectType(item);
     const typeLabel = {
+      activity: "动态归档",
       talk: "说说",
       blog: "日志",
-      photo: "相册",
+      album: "相册",
       message: "留言",
-      mention: "@",
+      comment: "评论",
+      visitor: "访客",
+      video: "视频",
+      like: "点赞",
+      favorite: "收藏",
+      diary: "日记",
+      photo: "照片",
+      mention: "提及",
       share: "转发",
       other: "动态",
     };
@@ -517,16 +578,22 @@ const app = {
       } catch {}
     }
 
+    if (!imagesHTML && (item.cover || item.preview_url || item.avatar)) {
+      const cover = item.cover || item.preview_url || item.avatar;
+      const proxied = this.proxyImageUrl(cover);
+      imagesHTML = `<div class="timeline-images grid-1"><img src="${this.escapeHtml(proxied)}" loading="lazy"></div>`;
+    }
+
     // 相册：可点击的封面卡片
-    if (type === "photo" && item.album_id) {
-      const coverProxied = item.cover_url ? this.proxyImageUrl(item.cover_url) : "";
+    if (type === "album" && (item.album_id || item.id)) {
+      const albumId = item.album_id || item.id;
+      const coverProxied = item.cover_url || item.cover ? this.proxyImageUrl(item.cover_url || item.cover) : "";
       const albumName = this.escapeHtml(item.name || item.title || "未命名相册");
-      const photoCount = item.photo_count || 0;
-      imagesHTML = `<div class="album-cover-card" onclick="app.openAlbumDetail('${item.album_id}', '${albumName.replace(/'/g, "\\'")}')">
+      imagesHTML = `<div class="album-cover-card" onclick="app.openAlbumDetail('${albumId}', '${albumName.replace(/'/g, "\\'")}')">
         ${coverProxied ? `<img src="${this.escapeHtml(coverProxied)}" loading="lazy">` : ""}
         <div class="album-cover-info">
           <div class="album-name">${albumName}</div>
-          <div class="album-count">${photoCount} 张照片 · 点击查看</div>
+          <div class="album-count">点击查看相册内容</div>
         </div>
       </div>`;
     }
@@ -553,6 +620,7 @@ const app = {
                 ${item.share_count !== undefined ? `<span class="timeline-stat">转发 ${item.share_count || 0}</span>` : ""}
                 ${item.read_count !== undefined ? `<span class="timeline-stat">阅读 ${item.read_count || 0}</span>` : ""}
                 ${item.photo_count !== undefined ? `<span class="timeline-stat">照片 ${item.photo_count || 0}</span>` : ""}
+                ${item.source ? `<span class="timeline-stat">来源 ${this.escapeHtml(item.source)}</span>` : ""}
             </div>
         `;
 
@@ -560,13 +628,142 @@ const app = {
   },
 
   detectType(item) {
+    if (item.type === "activity") return item.subtype || "activity";
+    if (item.type) return item.type;
     if (item.talk_id) return "talk";
     if (item.blog_id) return "blog";
-    if (item.album_id && !item.photo_id) return "photo";
+    if (item.album_id && !item.photo_id) return "album";
     if (item.message_id) return "message";
     if (item.mention_id) return "mention";
     if (item.share_id) return "share";
     return "other";
+  },
+
+  renderFriends(data) {
+    const summary = document.getElementById("friend-summary");
+    const groupsContainer = document.getElementById("friend-groups");
+    const sourceList = data?.list || [];
+    const groups = data?.groups || [];
+    const list = sourceList.filter((item) => {
+      if (this.friendFilter === "current" && !item.is_current) return false;
+      if (this.friendFilter === "historical" && !item.is_deleted) return false;
+      if (!this.friendSearch) return true;
+      const keyword = this.friendSearch.toLowerCase();
+      return [
+        item.name,
+        item.remark,
+        item.friend_qq,
+        item.group_name,
+      ].some((value) => String(value || "").toLowerCase().includes(keyword));
+    });
+
+    const currentCount = Number.isFinite(data?.current_total)
+      ? data.current_total
+      : list.filter((item) => item.is_current).length;
+    const deletedCount = Number.isFinite(data?.historical_total)
+      ? data.historical_total
+      : list.filter((item) => item.is_deleted).length;
+    const groupCount = Number.isFinite(data?.group_total)
+      ? data.group_total
+      : groups.filter((item) => !item.is_deleted).length;
+    summary.innerHTML = `
+      <div class="friend-stat-card">
+        <span class="friend-stat-label">当前好友</span>
+        <strong>${currentCount}</strong>
+      </div>
+      <div class="friend-stat-card">
+        <span class="friend-stat-label">历史联系人</span>
+        <strong>${deletedCount}</strong>
+      </div>
+      <div class="friend-stat-card">
+        <span class="friend-stat-label">好友分组</span>
+        <strong>${groupCount}</strong>
+      </div>
+    `;
+
+    const grouped = new Map();
+    for (const group of groups) {
+      grouped.set(String(group.group_id), {
+        group,
+        items: [],
+      });
+    }
+    for (const friend of list) {
+      const key = String(friend.group_id);
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          group: {
+            group_id: friend.group_id,
+            name: friend.group_name || (friend.is_deleted ? "历史互动" : "未分组"),
+            is_deleted: false,
+          },
+          items: [],
+        });
+      }
+      grouped.get(key).items.push(friend);
+    }
+
+    const sections = Array.from(grouped.values())
+      .filter((entry) => entry.items.length > 0)
+      .sort((a, b) => a.group.group_id - b.group.group_id)
+      .map((entry) => {
+        const cards = entry.items
+          .sort((a, b) => {
+            if (a.is_current !== b.is_current) return a.is_current ? -1 : 1;
+            return (b.interact_count || 0) - (a.interact_count || 0);
+          })
+          .map((friend) => this.renderFriendCard(friend))
+          .join("");
+
+        return `<section class="friend-group-section">
+          <div class="friend-group-header">
+            <h3>${this.escapeHtml(entry.group.name || "未分组")}</h3>
+            <span>${entry.items.length} 人</span>
+          </div>
+          <div class="friend-card-grid">${cards}</div>
+        </section>`;
+      })
+      .join("");
+
+    groupsContainer.innerHTML = sections;
+  },
+
+  renderFriendCard(friend) {
+    const statusLabel = friend.is_current ? "当前好友" : friend.is_deleted ? "历史联系人" : "联系人";
+    const lastSeen = this.formatTime(friend.last_seen_at || friend.updated_at);
+    return `<article class="friend-card ${friend.is_deleted ? "historical" : ""}">
+      <div class="friend-card-head">
+        <img class="friend-card-avatar" src="${this.proxyImageUrl(friend.avatar || ('https://q.qlogo.cn/headimg_dl?dst_uin=' + friend.friend_qq + '&spec=100'))}" loading="lazy">
+        <div class="friend-card-meta">
+          <h4>${this.escapeHtml(friend.name || friend.friend_qq)}</h4>
+          <p>${this.escapeHtml(friend.remark || friend.friend_qq)}</p>
+        </div>
+        <span class="friend-card-badge">${statusLabel}</span>
+      </div>
+      <div class="friend-card-body">
+        <span>QQ：${this.escapeHtml(friend.friend_qq || "")}</span>
+        <span>分组：${this.escapeHtml(friend.group_name || "未分组")}</span>
+        <span>互动：${friend.interact_count || 0}</span>
+        <span>最后出现：${this.escapeHtml(lastSeen || "未知")}</span>
+        ${friend.is_special_care ? "<span>特别关心</span>" : ""}
+      </div>
+    </article>`;
+  },
+
+  handleFriendSearch(event) {
+    this.friendSearch = (event.target.value || "").trim();
+    this.loadData();
+  },
+
+  switchFriendFilter(filter, event) {
+    if (event) event.preventDefault();
+    this.friendFilter = filter;
+    document
+      .querySelectorAll("[data-friend-filter]")
+      .forEach((el) =>
+        el.classList.toggle("active", el.dataset.friendFilter === filter),
+      );
+    this.loadData();
   },
 
   // ===== 同步 =====
@@ -780,8 +977,23 @@ const app = {
     }
   },
 
+  updateContentHead() {
+    const meta = this.viewMeta[this.currentView] || this.viewMeta.memories;
+    document.getElementById("content-kicker").textContent = meta.kicker;
+    document.getElementById("content-title").textContent = meta.title;
+    document.getElementById("content-description").textContent =
+      meta.description;
+  },
+
+  formatTimelineGroup(timeStr) {
+    if (!timeStr) return "更早以前";
+    const d = new Date(timeStr);
+    if (isNaN(d.getTime())) return "更早以前";
+    return `${d.getFullYear()} 年 ${String(d.getMonth() + 1).padStart(2, "0")} 月`;
+  },
+
   updateEmptyState() {
-    const meta = this.tabMeta[this.currentTab] || this.tabMeta.all;
+    const meta = this.viewMeta[this.currentView] || this.viewMeta.memories;
     document.getElementById("empty-title").textContent = meta.emptyTitle;
     document.getElementById("empty-description").textContent =
       meta.emptyDescription;
@@ -918,6 +1130,22 @@ const app = {
       syncConfirmButton.disabled = loading;
       syncConfirmButton.textContent = loading ? "同步中" : "确认同步";
     }
+  },
+
+  setupInfiniteLoad() {
+    if (this.infiniteObserver) {
+      this.infiniteObserver.disconnect();
+    }
+    const target = document.getElementById("load-more");
+    if (!target || this.currentView !== "memories") return;
+    this.infiniteObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && !this.loading && !target.classList.contains("hidden")) {
+          this.loadMore();
+        }
+      }
+    }, { rootMargin: "240px 0px" });
+    this.infiniteObserver.observe(target);
   },
 };
 

@@ -213,6 +213,15 @@ func parseCallback(data []byte) (map[string]interface{}, error) {
 	if strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}") {
 		var result map[string]interface{}
 		if err := json.Unmarshal([]byte(str), &result); err != nil {
+			normalized := normalizeJSObjectToJSON(str)
+			if normalized != "" {
+				if err := json.Unmarshal([]byte(normalized), &result); err == nil {
+					return result, nil
+				}
+			}
+			if jsResult, jsErr := parseJavaScriptObject(str); jsErr == nil {
+				return jsResult, nil
+			}
 			return nil, err
 		}
 		return result, nil
@@ -414,6 +423,19 @@ func getSliceValue(m map[string]interface{}, key string) []interface{} {
 		return v
 	}
 	return nil
+}
+
+func getBoolValue(m map[string]interface{}, key string) bool {
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	if v, ok := m[key].(string); ok {
+		return v == "1" || v == "true"
+	}
+	if v, ok := m[key].(float64); ok {
+		return int(v) == 1
+	}
+	return false
 }
 
 // checkResponseCode 检查响应码，识别 Cookie 过期等认证错误

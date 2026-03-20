@@ -58,6 +58,17 @@ func RegisterRoutes(mode string) *gin.Engine {
 	apiV1.POST("/sync/start", v1.StartSync)         // 开始同步数据
 	apiV1.GET("/sync/progress", v1.GetSyncProgress) // 获取同步进度
 
+	// 历史动态归档
+	apiV1.GET("/activities", v1.GetActivityList)          // 获取历史动态归档
+	apiV1.GET("/activities/detail", v1.GetActivityDetail) // 获取历史动态详情
+	apiV1.GET("/memory/timeline", v1.GetMemoryTimeline)   // 获取统一回忆时间线
+	apiV1.GET("/memory/stats", v1.GetMemoryStats)         // 获取回忆统计
+	apiV1.GET("/friends", v1.GetFriendList)               // 获取好友与历史联系人
+	apiV1.GET("/visitors", v1.GetVisitorList)             // 获取访客记录
+	apiV1.GET("/videos", v1.GetVideoList)                 // 获取视频列表
+	apiV1.GET("/favorites", v1.GetFavoriteList)           // 获取收藏列表
+	apiV1.GET("/diaries", v1.GetDiaryList)                // 获取私密日记
+
 	// 说说和日志
 	apiV1.GET("/talks", v1.GetTalkList)          // 获取说说列表
 	apiV1.GET("/talks/detail", v1.GetTalkDetail) // 获取说说详情

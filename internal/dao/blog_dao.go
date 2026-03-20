@@ -36,7 +36,7 @@ func BatchUpsertBlogs(blogs []*model.Blog) error {
 	}
 	return database.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "blog_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"title", "content", "summary", "category", "tags", "is_deleted", "like_count", "comment_count", "read_count", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"user_qq", "title", "content", "summary", "category", "tags", "is_deleted", "like_count", "comment_count", "read_count", "publish_time", "updated_at"}),
 	}).Create(&blogs).Error
 }
 
