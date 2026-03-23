@@ -19,9 +19,13 @@ const app = {
   lightboxImages: [],
   lightboxIndex: 0,
   infiniteObserver: null,
+  deferredImageObserver: null,
   friendSearch: "",
-  friendFilter: "all",
+  friendFilter: "current",
+  friendGroupFilter: "all",
   lastTimelineGroup: "",
+  imagePlaceholder:
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
   viewMeta: {
     memories: {
       kicker: "回忆时间线",
@@ -290,6 +294,10 @@ const app = {
     const friendsView = document.getElementById("friends-view");
     const empty = document.getElementById("empty-state");
     const loadMore = document.getElementById("load-more");
+    const contentScroll = document.getElementById("content-scroll");
+    const memorySummary = document.getElementById("memory-summary");
+
+    if (contentScroll) contentScroll.scrollTop = 0;
 
     timeline.classList.add("hidden");
     friendsView.classList.add("hidden");
@@ -299,10 +307,9 @@ const app = {
       "hidden",
       this.currentView !== "memories",
     );
-    document.getElementById("memory-summary").classList.toggle(
-      "hidden",
-      this.currentView !== "memories",
-    );
+    if (memorySummary) {
+      memorySummary.classList.toggle("hidden", this.currentView !== "memories");
+    }
     document.getElementById("friend-toolbar").classList.toggle(
       "hidden",
       this.currentView !== "friends",
@@ -356,7 +363,7 @@ const app = {
 
     let url = "";
     if (this.currentView === "friends") {
-      url = `/api/v1/friends?qq=${qq}&include_deleted=true&page=${p}&page_size=${ps}`;
+      return this.fetchAllFriendsData();
     } else {
       url = `/api/v1/memory/timeline?qq=${qq}&type=${encodeURIComponent(this.currentMemoryFilter)}&page=${p}&page_size=${ps}`;
     }
@@ -368,6 +375,55 @@ const app = {
       return res.data.list || [];
     } catch {}
     return this.currentView === "friends" ? null : [];
+  },
+
+  async fetchAllFriendsData() {
+    const qq = this.qq;
+    const pageSize = 100;
+    let page = 1;
+    let total = 0;
+    let currentTotal = 0;
+    let groupTotal = 0;
+    let historicalTotal = 0;
+    let groups = [];
+    const list = [];
+
+    try {
+      while (true) {
+        const res = await this.api(
+          `/api/v1/friends?qq=${qq}&page=${page}&page_size=${pageSize}`,
+        );
+        if (res.code !== 0 || !res.data) break;
+
+        const data = res.data;
+        const pageList = Array.isArray(data.list) ? data.list : [];
+        if (page === 1) {
+          total = data.total || 0;
+          currentTotal = data.current_total || 0;
+          historicalTotal = data.historical_total || 0;
+          groupTotal = data.group_total || 0;
+          groups = Array.isArray(data.groups) ? data.groups : [];
+        }
+
+        list.push(...pageList);
+
+        if (pageList.length < pageSize || list.length >= total) {
+          break;
+        }
+        page += 1;
+      }
+    } catch {}
+
+    return {
+      list,
+      groups,
+      total,
+      current_total: currentTotal,
+      historical_total: historicalTotal,
+      group_total: groupTotal,
+      page: 1,
+      page_size: list.length || pageSize,
+    };
   },
 
   async loadMore() {
@@ -405,7 +461,7 @@ const app = {
       memoryCount = memoryRes.code === 0 && memoryRes.data ? memoryRes.data.total || 0 : 0;
     } catch {}
     try {
-      const friendRes = await this.api(`/api/v1/friends?qq=${this.qq}&include_deleted=true&page=1&page_size=1`);
+      const friendRes = await this.api(`/api/v1/friends?qq=${this.qq}&page=1&page_size=1`);
       friendCount = friendRes.code === 0 && friendRes.data ? friendRes.data.total || 0 : 0;
     } catch {}
 
@@ -420,30 +476,8 @@ const app = {
     try {
       const res = await this.api(`/api/v1/memory/stats?qq=${this.qq}`);
       if (res.code !== 0 || !res.data) return;
-      const data = res.data;
-      const years = (data.by_year || [])
-        .slice(0, 4)
-        .map((item) => `<span>${item.year} · ${item.count}</span>`)
-        .join("");
-      const types = Object.entries(data.by_type || {})
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5)
-        .map(([type, count]) => `<span>${this.escapeHtml(type)} ${count}</span>`)
-        .join("");
-      document.getElementById("memory-summary").innerHTML = `
-        <div class="memory-summary-card">
-          <span class="memory-summary-label">归档总量</span>
-          <strong>${data.total || 0}</strong>
-        </div>
-        <div class="memory-summary-card">
-          <span class="memory-summary-label">年份分布</span>
-          <div class="memory-summary-tags">${years || "<span>暂无</span>"}</div>
-        </div>
-        <div class="memory-summary-card">
-          <span class="memory-summary-label">内容构成</span>
-          <div class="memory-summary-tags">${types || "<span>暂无</span>"}</div>
-        </div>
-      `;
+      const memorySummary = document.getElementById("memory-summary");
+      if (memorySummary) memorySummary.innerHTML = "";
     } catch {}
   },
 
@@ -473,6 +507,7 @@ const app = {
     const container = document.getElementById("timeline");
     container.innerHTML = "";
     let currentGroup = "";
+    let currentSection = null;
     items.forEach((item) => {
       const group = this.formatTimelineGroup(
         item.publish_time ||
@@ -483,16 +518,21 @@ const app = {
       );
       if (group !== currentGroup) {
         currentGroup = group;
-        container.appendChild(this.createTimelineGroup(group));
+        currentSection = this.createTimelineSection(group);
+        container.appendChild(currentSection);
       }
-      container.appendChild(this.createTimelineItem(item));
+      currentSection
+        .querySelector(".timeline-section-items")
+        .appendChild(this.createTimelineItem(item));
     });
     this.lastTimelineGroup = currentGroup;
+    this.observeDeferredImages(container);
   },
 
   appendTimeline(items) {
     const container = document.getElementById("timeline");
     let lastGroup = this.lastTimelineGroup || "";
+    let currentSection = container.lastElementChild;
     items.forEach((item) => {
       const group = this.formatTimelineGroup(
         item.publish_time ||
@@ -503,18 +543,27 @@ const app = {
       );
       if (group !== lastGroup) {
         lastGroup = group;
-        container.appendChild(this.createTimelineGroup(group));
+        currentSection = this.createTimelineSection(group);
+        container.appendChild(currentSection);
       }
-      container.appendChild(this.createTimelineItem(item));
+      currentSection
+        .querySelector(".timeline-section-items")
+        .appendChild(this.createTimelineItem(item));
     });
     this.lastTimelineGroup = lastGroup;
+    this.observeDeferredImages(container);
   },
 
-  createTimelineGroup(label) {
+  createTimelineSection(label) {
     const div = document.createElement("div");
-    div.className = "timeline-group";
+    div.className = "timeline-section";
     div.dataset.group = label;
-    div.innerHTML = `<span>${this.escapeHtml(label)}</span>`;
+    div.innerHTML = `
+      <div class="timeline-group" data-group="${this.escapeHtml(label)}">
+        <span>${this.escapeHtml(label)}</span>
+      </div>
+      <div class="timeline-section-items"></div>
+    `;
     return div;
   },
 
@@ -558,30 +607,32 @@ const app = {
           typeof item.images === "string"
             ? JSON.parse(item.images)
             : item.images;
-        if (Array.isArray(imgs) && imgs.length > 0) {
-          const gridClass =
-            imgs.length === 1
-              ? "grid-1"
-              : imgs.length === 2
-                ? "grid-2"
-                : "grid-3";
-          const allUrls = imgs.map((url) => this.escapeHtml(this.proxyImageUrl(url)));
+        const filteredImgs = Array.isArray(imgs)
+          ? imgs.filter((url) => !this.isAvatarLikeUrl(url))
+          : [];
+        if (filteredImgs.length > 0) {
+          const allUrls = filteredImgs.map((url) => this.proxyImageUrl(url));
           const urlsJson = JSON.stringify(allUrls).replace(/'/g, "&#39;");
-          const imgTags = allUrls
-            .map(
-              (proxied, idx) =>
-                `<img src="${proxied}" loading="lazy" onclick="app.openLightbox(${urlsJson.replace(/"/g, '&quot;')}, ${idx})">`,
-            )
-            .join("");
-          imagesHTML = `<div class="timeline-images ${gridClass}">${imgTags}</div>`;
+          const preview = this.buildDeferredImageTag(allUrls[0], {
+            className: "deferred-image",
+            onclick: `app.openLightbox(${urlsJson.replace(/"/g, "&quot;")}, 0)`,
+          });
+          const countBadge = filteredImgs.length > 1
+            ? `<span class="timeline-image-count">共 ${filteredImgs.length} 张</span>`
+            : "";
+          imagesHTML = `<div class="timeline-images grid-1 timeline-images-compact">${preview}${countBadge}</div>`;
         }
       } catch {}
     }
 
-    if (!imagesHTML && (item.cover || item.preview_url || item.avatar)) {
-      const cover = item.cover || item.preview_url || item.avatar;
-      const proxied = this.proxyImageUrl(cover);
-      imagesHTML = `<div class="timeline-images grid-1"><img src="${this.escapeHtml(proxied)}" loading="lazy"></div>`;
+    if (!imagesHTML && (item.cover || item.preview_url)) {
+      const cover = item.cover || item.preview_url;
+      if (!this.isAvatarLikeUrl(cover)) {
+        const proxied = this.proxyImageUrl(cover);
+        imagesHTML = `<div class="timeline-images grid-1">${this.buildDeferredImageTag(proxied, {
+          className: "deferred-image",
+        })}</div>`;
+      }
     }
 
     // 相册：可点击的封面卡片
@@ -590,7 +641,9 @@ const app = {
       const coverProxied = item.cover_url || item.cover ? this.proxyImageUrl(item.cover_url || item.cover) : "";
       const albumName = this.escapeHtml(item.name || item.title || "未命名相册");
       imagesHTML = `<div class="album-cover-card" onclick="app.openAlbumDetail('${albumId}', '${albumName.replace(/'/g, "\\'")}')">
-        ${coverProxied ? `<img src="${this.escapeHtml(coverProxied)}" loading="lazy">` : ""}
+        ${coverProxied ? this.buildDeferredImageTag(coverProxied, {
+          className: "deferred-image",
+        }) : ""}
         <div class="album-cover-info">
           <div class="album-name">${albumName}</div>
           <div class="album-count">点击查看相册内容</div>
@@ -604,7 +657,10 @@ const app = {
 
     div.innerHTML = `
             <div class="timeline-header">
-                <img class="timeline-avatar" src="${this.proxyImageUrl('https://q.qlogo.cn/headimg_dl?dst_uin=' + authorQQ + '&spec=100')}" loading="lazy">
+                ${this.buildDeferredImageTag(
+                  this.proxyImageUrl(`https://q.qlogo.cn/headimg_dl?dst_uin=${authorQQ}&spec=100`),
+                  { className: "timeline-avatar deferred-image" },
+                )}
                 <div class="timeline-meta">
                     <div class="timeline-author">${this.escapeHtml(item.author_name || this.nickname || this.qq)}</div>
                     <div class="timeline-time">${time}</div>
@@ -640,13 +696,21 @@ const app = {
   },
 
   renderFriends(data) {
-    const summary = document.getElementById("friend-summary");
+    const filterContainer = document.getElementById("friend-group-filters");
     const groupsContainer = document.getElementById("friend-groups");
     const sourceList = data?.list || [];
     const groups = data?.groups || [];
+    const activeGroups = groups.filter((item) => item && !item.is_deleted);
+    const groupMap = new Map(
+      activeGroups.map((group) => [String(group.group_id), group.name || "未分组"]),
+    );
+    const discoveredGroupIds = new Set();
     const list = sourceList.filter((item) => {
-      if (this.friendFilter === "current" && !item.is_current) return false;
-      if (this.friendFilter === "historical" && !item.is_deleted) return false;
+      const groupKey = String(item.group_id);
+      discoveredGroupIds.add(groupKey);
+      if (this.friendGroupFilter !== "all" && groupKey !== this.friendGroupFilter) {
+        return false;
+      }
       if (!this.friendSearch) return true;
       const keyword = this.friendSearch.toLowerCase();
       return [
@@ -656,33 +720,31 @@ const app = {
         item.group_name,
       ].some((value) => String(value || "").toLowerCase().includes(keyword));
     });
-
-    const currentCount = Number.isFinite(data?.current_total)
-      ? data.current_total
-      : list.filter((item) => item.is_current).length;
-    const deletedCount = Number.isFinite(data?.historical_total)
-      ? data.historical_total
-      : list.filter((item) => item.is_deleted).length;
-    const groupCount = Number.isFinite(data?.group_total)
-      ? data.group_total
-      : groups.filter((item) => !item.is_deleted).length;
-    summary.innerHTML = `
-      <div class="friend-stat-card">
-        <span class="friend-stat-label">当前好友</span>
-        <strong>${currentCount}</strong>
-      </div>
-      <div class="friend-stat-card">
-        <span class="friend-stat-label">历史联系人</span>
-        <strong>${deletedCount}</strong>
-      </div>
-      <div class="friend-stat-card">
-        <span class="friend-stat-label">好友分组</span>
-        <strong>${groupCount}</strong>
-      </div>
-    `;
+    const availableGroupIds = Array.from(discoveredGroupIds);
+    if (this.friendGroupFilter !== "all" && !availableGroupIds.includes(this.friendGroupFilter)) {
+      this.friendGroupFilter = "all";
+    }
+    const filterOptions = [
+      { id: "all", name: "全部分组", count: sourceList.length },
+      ...availableGroupIds
+        .sort((a, b) => Number(a) - Number(b))
+        .map((groupId) => ({
+          id: groupId,
+          name: groupMap.get(groupId) || "未分组",
+          count: sourceList.filter((item) => String(item.group_id) === groupId).length,
+        })),
+    ];
+    filterContainer.innerHTML = filterOptions
+      .map((group) => `
+        <button
+          class="filter-chip ${this.friendGroupFilter === group.id ? "active" : ""}"
+          onclick="app.switchFriendGroupFilter('${this.escapeHtml(group.id)}', event)"
+        >${this.escapeHtml(group.name)}${group.id === "all" ? "" : ` · ${group.count}`}</button>
+      `)
+      .join("");
 
     const grouped = new Map();
-    for (const group of groups) {
+    for (const group of activeGroups) {
       grouped.set(String(group.group_id), {
         group,
         items: [],
@@ -694,7 +756,7 @@ const app = {
         grouped.set(key, {
           group: {
             group_id: friend.group_id,
-            name: friend.group_name || (friend.is_deleted ? "历史互动" : "未分组"),
+            name: friend.group_name || "未分组",
             is_deleted: false,
           },
           items: [],
@@ -726,25 +788,24 @@ const app = {
       .join("");
 
     groupsContainer.innerHTML = sections;
+    this.observeDeferredImages(groupsContainer);
   },
 
   renderFriendCard(friend) {
-    const statusLabel = friend.is_current ? "当前好友" : friend.is_deleted ? "历史联系人" : "联系人";
-    const lastSeen = this.formatTime(friend.last_seen_at || friend.updated_at);
-    return `<article class="friend-card ${friend.is_deleted ? "historical" : ""}">
+    return `<article class="friend-card">
       <div class="friend-card-head">
-        <img class="friend-card-avatar" src="${this.proxyImageUrl(friend.avatar || ('https://q.qlogo.cn/headimg_dl?dst_uin=' + friend.friend_qq + '&spec=100'))}" loading="lazy">
+        ${this.buildDeferredImageTag(
+          this.proxyImageUrl(friend.avatar || (`https://q.qlogo.cn/headimg_dl?dst_uin=${friend.friend_qq}&spec=100`)),
+          { className: "friend-card-avatar deferred-image" },
+        )}
         <div class="friend-card-meta">
           <h4>${this.escapeHtml(friend.name || friend.friend_qq)}</h4>
           <p>${this.escapeHtml(friend.remark || friend.friend_qq)}</p>
         </div>
-        <span class="friend-card-badge">${statusLabel}</span>
+        <span class="friend-card-badge">好友</span>
       </div>
       <div class="friend-card-body">
         <span>QQ：${this.escapeHtml(friend.friend_qq || "")}</span>
-        <span>分组：${this.escapeHtml(friend.group_name || "未分组")}</span>
-        <span>互动：${friend.interact_count || 0}</span>
-        <span>最后出现：${this.escapeHtml(lastSeen || "未知")}</span>
         ${friend.is_special_care ? "<span>特别关心</span>" : ""}
       </div>
     </article>`;
@@ -757,12 +818,13 @@ const app = {
 
   switchFriendFilter(filter, event) {
     if (event) event.preventDefault();
-    this.friendFilter = filter;
-    document
-      .querySelectorAll("[data-friend-filter]")
-      .forEach((el) =>
-        el.classList.toggle("active", el.dataset.friendFilter === filter),
-      );
+    this.friendFilter = "current";
+    this.loadData();
+  },
+
+  switchFriendGroupFilter(groupId, event) {
+    if (event) event.preventDefault();
+    this.friendGroupFilter = groupId || "all";
     this.loadData();
   },
 
@@ -934,6 +996,17 @@ const app = {
     return url;
   },
 
+  isAvatarLikeUrl(url) {
+    const value = String(url || "").trim().toLowerCase();
+    if (!value) return false;
+    return (
+      value.includes("q.qlogo.cn/headimg_dl") ||
+      value.includes("/headimg") ||
+      value.includes("qlogo") ||
+      value.includes("avatar")
+    );
+  },
+
   updateOverviewStats(total) {
     const el = document.getElementById("sidebar-total");
     if (el) el.textContent = total || 0;
@@ -1060,12 +1133,20 @@ const app = {
       const proxied = this.proxyImageUrl(url);
       const item = document.createElement("div");
       item.className = "photo-item";
-      item.innerHTML = `<img src="${this.escapeHtml(proxied)}" loading="lazy" data-album-photo onclick="app.openAlbumLightbox(this)">`;
+      item.innerHTML = this.buildDeferredImageTag(proxied, {
+        className: "deferred-image",
+        dataAttrs: {
+          "album-photo": "true",
+          fullsrc: proxied,
+        },
+        onclick: "app.openAlbumLightbox(this)",
+      });
       if (photo.desc) {
         item.innerHTML += `<div class="photo-desc">${this.escapeHtml(photo.desc)}</div>`;
       }
       container.appendChild(item);
     });
+    this.observeDeferredImages(container);
   },
 
   async loadMorePhotos() {
@@ -1083,7 +1164,9 @@ const app = {
 
   openAlbumLightbox(imgEl) {
     const allImgs = Array.from(document.querySelectorAll("[data-album-photo]"));
-    const urls = allImgs.map((img) => img.src);
+    const urls = allImgs.map(
+      (img) => img.dataset.fullsrc || img.dataset.src || img.currentSrc || img.src,
+    );
     const index = allImgs.indexOf(imgEl);
     this.openLightbox(urls, index >= 0 ? index : 0);
   },
@@ -1132,11 +1215,74 @@ const app = {
     }
   },
 
+  buildDeferredImageTag(src, options = {}) {
+    const safeSrc = this.escapeHtml(src || "");
+    if (!safeSrc) return "";
+
+    const className = options.className
+      ? ` class="${this.escapeHtml(options.className)}"`
+      : "";
+    const alt = options.alt ? ` alt="${this.escapeHtml(options.alt)}"` : ' alt=""';
+    const onclick = options.onclick
+      ? ` onclick="${options.onclick.replace(/"/g, "&quot;")}"`
+      : "";
+    const dataAttrs = Object.entries(options.dataAttrs || {})
+      .map(([key, value]) => ` data-${key}="${this.escapeHtml(String(value))}"`)
+      .join("");
+
+    return `<img src="${this.imagePlaceholder}" data-src="${safeSrc}" loading="lazy" decoding="async"${className}${alt}${onclick}${dataAttrs}>`;
+  },
+
+  ensureDeferredImageObserver() {
+    if (this.deferredImageObserver) return this.deferredImageObserver;
+    const root = document.getElementById("content-scroll") || null;
+    this.deferredImageObserver = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        this.loadDeferredImage(entry.target);
+        this.deferredImageObserver.unobserve(entry.target);
+      });
+    }, { root, rootMargin: "300px 0px" });
+    return this.deferredImageObserver;
+  },
+
+  observeDeferredImages(container = document) {
+    const images = container.querySelectorAll("img[data-src]");
+    if (!images.length) return;
+
+    if (!("IntersectionObserver" in window)) {
+      images.forEach((img) => this.loadDeferredImage(img));
+      return;
+    }
+
+    const observer = this.ensureDeferredImageObserver();
+    images.forEach((img) => {
+      if (img.dataset.loaded === "true") return;
+      observer.observe(img);
+    });
+  },
+
+  loadDeferredImage(img) {
+    if (!img || img.dataset.loaded === "true") return;
+    const src = img.dataset.src;
+    if (!src) return;
+    img.addEventListener(
+      "load",
+      () => {
+        img.classList.add("is-loaded");
+      },
+      { once: true },
+    );
+    img.src = src;
+    img.dataset.loaded = "true";
+  },
+
   setupInfiniteLoad() {
     if (this.infiniteObserver) {
       this.infiniteObserver.disconnect();
     }
     const target = document.getElementById("load-more");
+    const root = document.getElementById("content-scroll");
     if (!target || this.currentView !== "memories") return;
     this.infiniteObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) {
@@ -1144,7 +1290,7 @@ const app = {
           this.loadMore();
         }
       }
-    }, { rootMargin: "240px 0px" });
+    }, { root: root || null, rootMargin: "240px 0px" });
     this.infiniteObserver.observe(target);
   },
 };

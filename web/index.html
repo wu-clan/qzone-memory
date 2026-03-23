@@ -215,92 +215,88 @@
                 <!-- 内容区域 -->
                 <main class="content">
                     <section class="content-surface">
-                        <div class="content-head">
-                            <div>
-                                <p id="content-kicker" class="content-kicker">回忆时间线</p>
-                                <h2 id="content-title" class="content-title">完整回忆</h2>
-                                <p id="content-description" class="content-description">
-                                    按时间线回看已归档的 QQ 空间内容与历史痕迹
+                        <div class="content-top">
+                            <div class="content-head">
+                                <div>
+                                    <p id="content-kicker" class="content-kicker">回忆时间线</p>
+                                    <h2 id="content-title" class="content-title">完整回忆</h2>
+                                    <p id="content-description" class="content-description">
+                                        按时间线回看已归档的 QQ 空间内容与历史痕迹
+                                    </p>
+                                </div>
+                                <div id="memory-filters" class="memory-filters">
+                                    <button class="filter-chip active" data-filter="all" onclick="app.switchMemoryFilter('all', event)">全部</button>
+                                    <button class="filter-chip" data-filter="activity" onclick="app.switchMemoryFilter('activity', event)">历史动态</button>
+                                    <button class="filter-chip" data-filter="talk" onclick="app.switchMemoryFilter('talk', event)">说说</button>
+                                    <button class="filter-chip" data-filter="blog" onclick="app.switchMemoryFilter('blog', event)">日志</button>
+                                    <button class="filter-chip" data-filter="album" onclick="app.switchMemoryFilter('album', event)">相册</button>
+                                    <button class="filter-chip" data-filter="message" onclick="app.switchMemoryFilter('message', event)">留言</button>
+                                    <button class="filter-chip" data-filter="comment" onclick="app.switchMemoryFilter('comment', event)">评论</button>
+                                    <button class="filter-chip" data-filter="visitor" onclick="app.switchMemoryFilter('visitor', event)">访客</button>
+                                    <button class="filter-chip" data-filter="video" onclick="app.switchMemoryFilter('video', event)">视频</button>
+                                    <button class="filter-chip" data-filter="like" onclick="app.switchMemoryFilter('like', event)">点赞</button>
+                                    <button class="filter-chip" data-filter="mention" onclick="app.switchMemoryFilter('mention', event)">提及</button>
+                                    <button class="filter-chip" data-filter="share" onclick="app.switchMemoryFilter('share', event)">转发</button>
+                                    <button class="filter-chip" data-filter="favorite" onclick="app.switchMemoryFilter('favorite', event)">收藏</button>
+                                    <button class="filter-chip" data-filter="diary" onclick="app.switchMemoryFilter('diary', event)">日记</button>
+                                </div>
+                            </div>
+                            <div id="friend-toolbar" class="friend-toolbar hidden">
+                                <input
+                                    id="friend-search"
+                                    class="friend-search"
+                                    type="search"
+                                    placeholder="搜索好友昵称、备注或 QQ"
+                                    oninput="app.handleFriendSearch(event)"
+                                />
+                                <div id="friend-group-filters" class="friend-filter-group"></div>
+                            </div>
+                        </div>
+                        <div id="content-scroll" class="content-scroll">
+
+                            <!-- 空状态 -->
+                            <div id="empty-state" class="empty-state hidden">
+                                <div class="empty-icon">Q</div>
+                                <h2 id="empty-title">还没有数据</h2>
+                                <p id="empty-description">
+                                    当前没有可展示的数据，请先执行同步
                                 </p>
+                                <button
+                                    class="btn btn-primary btn-lg"
+                                    onclick="app.showSyncDialog()"
+                                >
+                                    开始同步
+                                </button>
                             </div>
-                            <div id="memory-filters" class="memory-filters">
-                                <button class="filter-chip active" data-filter="all" onclick="app.switchMemoryFilter('all', event)">全部</button>
-                                <button class="filter-chip" data-filter="activity" onclick="app.switchMemoryFilter('activity', event)">历史动态</button>
-                                <button class="filter-chip" data-filter="talk" onclick="app.switchMemoryFilter('talk', event)">说说</button>
-                                <button class="filter-chip" data-filter="blog" onclick="app.switchMemoryFilter('blog', event)">日志</button>
-                                <button class="filter-chip" data-filter="album" onclick="app.switchMemoryFilter('album', event)">相册</button>
-                                <button class="filter-chip" data-filter="message" onclick="app.switchMemoryFilter('message', event)">留言</button>
-                                <button class="filter-chip" data-filter="comment" onclick="app.switchMemoryFilter('comment', event)">评论</button>
-                                <button class="filter-chip" data-filter="visitor" onclick="app.switchMemoryFilter('visitor', event)">访客</button>
-                                <button class="filter-chip" data-filter="video" onclick="app.switchMemoryFilter('video', event)">视频</button>
-                                <button class="filter-chip" data-filter="like" onclick="app.switchMemoryFilter('like', event)">点赞</button>
-                                <button class="filter-chip" data-filter="mention" onclick="app.switchMemoryFilter('mention', event)">提及</button>
-                                <button class="filter-chip" data-filter="share" onclick="app.switchMemoryFilter('share', event)">转发</button>
-                                <button class="filter-chip" data-filter="favorite" onclick="app.switchMemoryFilter('favorite', event)">收藏</button>
-                                <button class="filter-chip" data-filter="diary" onclick="app.switchMemoryFilter('diary', event)">日记</button>
+
+                            <!-- 相册照片详情 -->
+                            <div id="album-detail" class="album-detail hidden">
+                                <div class="album-detail-header">
+                                    <button class="btn btn-outline btn-sm" onclick="app.closeAlbumDetail()">← 返回相册</button>
+                                    <h3 id="album-detail-title">相册名称</h3>
+                                    <span id="album-detail-count" class="album-detail-count">0 张照片</span>
+                                </div>
+                                <div id="album-photos" class="album-photos-grid"></div>
+                                <div id="album-load-more" class="load-more hidden">
+                                    <button class="btn btn-outline" onclick="app.loadMorePhotos()">加载更多</button>
+                                </div>
                             </div>
-                        </div>
-                        <div id="friend-toolbar" class="friend-toolbar hidden">
-                            <input
-                                id="friend-search"
-                                class="friend-search"
-                                type="search"
-                                placeholder="搜索好友昵称、备注或 QQ"
-                                oninput="app.handleFriendSearch(event)"
-                            />
-                            <div class="friend-filter-group">
-                                <button class="filter-chip active" data-friend-filter="all" onclick="app.switchFriendFilter('all', event)">全部</button>
-                                <button class="filter-chip" data-friend-filter="current" onclick="app.switchFriendFilter('current', event)">当前好友</button>
-                                <button class="filter-chip" data-friend-filter="historical" onclick="app.switchFriendFilter('historical', event)">历史联系人</button>
+
+                            <!-- 时间线 -->
+                            <div id="timeline" class="timeline hidden"></div>
+                            <div id="load-more" class="load-more hidden">
+                                <button
+                                    class="btn btn-outline"
+                                    onclick="app.loadMore()"
+                                >
+                                    加载更多
+                                </button>
                             </div>
-                        </div>
-                        <div id="memory-summary" class="memory-summary hidden"></div>
 
-                        <!-- 空状态 -->
-                        <div id="empty-state" class="empty-state hidden">
-                            <div class="empty-icon">Q</div>
-                            <h2 id="empty-title">还没有数据</h2>
-                            <p id="empty-description">
-                                当前没有可展示的数据，请先执行同步
-                            </p>
-                            <button
-                                class="btn btn-primary btn-lg"
-                                onclick="app.showSyncDialog()"
-                            >
-                                开始同步
-                            </button>
-                        </div>
-
-                        <!-- 相册照片详情 -->
-                        <div id="album-detail" class="album-detail hidden">
-                            <div class="album-detail-header">
-                                <button class="btn btn-outline btn-sm" onclick="app.closeAlbumDetail()">← 返回相册</button>
-                                <h3 id="album-detail-title">相册名称</h3>
-                                <span id="album-detail-count" class="album-detail-count">0 张照片</span>
+                            <!-- 好友 -->
+                            <div id="friends-view" class="friends-view hidden">
+                                <div id="friend-groups" class="friend-groups"></div>
                             </div>
-                            <div id="album-photos" class="album-photos-grid"></div>
-                            <div id="album-load-more" class="load-more hidden">
-                                <button class="btn btn-outline" onclick="app.loadMorePhotos()">加载更多</button>
-                            </div>
-                        </div>
-
-                        <!-- 时间线 -->
-                        <div id="timeline" class="timeline hidden"></div>
-
-                        <!-- 好友 -->
-                        <div id="friends-view" class="friends-view hidden">
-                            <div id="friend-summary" class="friend-summary"></div>
-                            <div id="friend-groups" class="friend-groups"></div>
-                        </div>
-
-                        <!-- 加载更多 -->
-                        <div id="load-more" class="load-more hidden">
-                            <button
-                                class="btn btn-outline"
-                                onclick="app.loadMore()"
-                            >
-                                加载更多
-                            </button>
                         </div>
                     </section>
                 </main>
