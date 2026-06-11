@@ -1,16 +1,17 @@
 package dao
 
 import (
+	"context"
 	"github.com/qzone-memory/database"
 	"github.com/qzone-memory/internal/model"
 	"gorm.io/gorm/clause"
 )
 
-func ListSharesByTarget(targetType, targetID string, offset, limit int) ([]*model.Share, int64, error) {
+func ListSharesByTarget(ctx context.Context, targetType, targetID string, offset, limit int) ([]*model.Share, int64, error) {
 	var shares []*model.Share
 	var total int64
 
-	query := database.DB.Model(&model.Share{}).Where("target_type = ? AND target_id = ?", targetType, targetID)
+	query := database.DB.WithContext(ctx).Model(&model.Share{}).Where("target_type = ? AND target_id = ?", targetType, targetID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

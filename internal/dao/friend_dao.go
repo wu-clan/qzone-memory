@@ -1,17 +1,18 @@
 package dao
 
 import (
+	"context"
 	"github.com/qzone-memory/database"
 	"github.com/qzone-memory/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func ListFriends(userQQ string, includeDeleted bool, offset, limit int) ([]*model.Friend, int64, error) {
+func ListFriends(ctx context.Context, userQQ string, includeDeleted bool, offset, limit int) ([]*model.Friend, int64, error) {
 	var friends []*model.Friend
 	var total int64
 
-	query := database.DB.Model(&model.Friend{}).Where("user_qq = ?", userQQ)
+	query := database.DB.WithContext(ctx).Model(&model.Friend{}).Where("user_qq = ?", userQQ)
 	if !includeDeleted {
 		query = query.Where("is_deleted = ?", false)
 	}
@@ -27,14 +28,14 @@ func ListFriends(userQQ string, includeDeleted bool, offset, limit int) ([]*mode
 	return friends, total, err
 }
 
-func CountFriendsByStatus(userQQ string) (currentTotal, historicalTotal int64, err error) {
-	if err = database.DB.Model(&model.Friend{}).
+func CountFriendsByStatus(ctx context.Context, userQQ string) (currentTotal, historicalTotal int64, err error) {
+	if err = database.DB.WithContext(ctx).Model(&model.Friend{}).
 		Where("user_qq = ? AND is_current = ?", userQQ, true).
 		Count(&currentTotal).Error; err != nil {
 		return 0, 0, err
 	}
 
-	if err = database.DB.Model(&model.Friend{}).
+	if err = database.DB.WithContext(ctx).Model(&model.Friend{}).
 		Where("user_qq = ? AND is_deleted = ?", userQQ, true).
 		Count(&historicalTotal).Error; err != nil {
 		return 0, 0, err

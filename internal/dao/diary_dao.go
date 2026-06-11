@@ -1,15 +1,16 @@
 package dao
 
 import (
+	"context"
 	"github.com/qzone-memory/database"
 	"github.com/qzone-memory/internal/model"
 	"gorm.io/gorm/clause"
 )
 
-func ListDiaries(userQQ string, offset, limit int) ([]*model.Diary, int64, error) {
+func ListDiaries(ctx context.Context, userQQ string, offset, limit int) ([]*model.Diary, int64, error) {
 	var items []*model.Diary
 	var total int64
-	query := database.DB.Model(&model.Diary{}).Where("user_qq = ?", userQQ)
+	query := database.DB.WithContext(ctx).Model(&model.Diary{}).Where("user_qq = ?", userQQ)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

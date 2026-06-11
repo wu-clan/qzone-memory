@@ -1,8 +1,12 @@
 package dao
 
 import (
+	"context"
+	"errors"
 	"github.com/qzone-memory/database"
+	"github.com/qzone-memory/internal/common"
 	"github.com/qzone-memory/internal/model"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -11,17 +15,23 @@ type PhotoSummary struct {
 	AlbumID string
 }
 
-func GetPhotoByPhotoID(photoID string) (*model.Photo, error) {
+func GetPhotoByPhotoID(ctx context.Context, photoID string) (*model.Photo, error) {
 	var photo model.Photo
-	err := database.DB.Where("photo_id = ?", photoID).First(&photo).Error
-	return &photo, err
+	err := database.DB.WithContext(ctx).Where("photo_id = ?", photoID).First(&photo).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.ErrNotFound
+		}
+		return nil, err
+	}
+	return &photo, nil
 }
 
-func ListPhotos(userQQ string, offset, limit int) ([]*model.Photo, int64, error) {
+func ListPhotos(ctx context.Context, userQQ string, offset, limit int) ([]*model.Photo, int64, error) {
 	var photos []*model.Photo
 	var total int64
 
-	query := database.DB.Model(&model.Photo{}).Where("user_qq = ?", userQQ)
+	query := database.DB.WithContext(ctx).Model(&model.Photo{}).Where("user_qq = ?", userQQ)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -30,11 +40,11 @@ func ListPhotos(userQQ string, offset, limit int) ([]*model.Photo, int64, error)
 	return photos, total, err
 }
 
-func ListPhotosByAlbum(albumID string, offset, limit int) ([]*model.Photo, int64, error) {
+func ListPhotosByAlbum(ctx context.Context, albumID string, offset, limit int) ([]*model.Photo, int64, error) {
 	var photos []*model.Photo
 	var total int64
 
-	query := database.DB.Model(&model.Photo{}).Where("album_id = ?", albumID)
+	query := database.DB.WithContext(ctx).Model(&model.Photo{}).Where("album_id = ?", albumID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

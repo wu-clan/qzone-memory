@@ -1,8 +1,12 @@
 package dao
 
 import (
+	"context"
+	"errors"
 	"github.com/qzone-memory/database"
+	"github.com/qzone-memory/internal/common"
 	"github.com/qzone-memory/internal/model"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -11,17 +15,23 @@ type BlogSummary struct {
 	CommentCount int
 }
 
-func GetBlogByBlogID(blogID string) (*model.Blog, error) {
+func GetBlogByBlogID(ctx context.Context, blogID string) (*model.Blog, error) {
 	var blog model.Blog
-	err := database.DB.Where("blog_id = ?", blogID).First(&blog).Error
-	return &blog, err
+	err := database.DB.WithContext(ctx).Where("blog_id = ?", blogID).First(&blog).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.ErrNotFound
+		}
+		return nil, err
+	}
+	return &blog, nil
 }
 
-func ListBlogs(userQQ string, offset, limit int) ([]*model.Blog, int64, error) {
+func ListBlogs(ctx context.Context, userQQ string, offset, limit int) ([]*model.Blog, int64, error) {
 	var blogs []*model.Blog
 	var total int64
 
-	query := database.DB.Model(&model.Blog{}).Where("user_qq = ?", userQQ)
+	query := database.DB.WithContext(ctx).Model(&model.Blog{}).Where("user_qq = ?", userQQ)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

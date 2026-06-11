@@ -1,16 +1,17 @@
 package dao
 
 import (
+	"context"
 	"github.com/qzone-memory/database"
 	"github.com/qzone-memory/internal/model"
 	"gorm.io/gorm/clause"
 )
 
-func ListMentions(userQQ string, offset, limit int) ([]*model.Mention, int64, error) {
+func ListMentions(ctx context.Context, userQQ string, offset, limit int) ([]*model.Mention, int64, error) {
 	var mentions []*model.Mention
 	var total int64
 
-	query := database.DB.Model(&model.Mention{}).Where("user_qq = ?", userQQ)
+	query := database.DB.WithContext(ctx).Model(&model.Mention{}).Where("user_qq = ?", userQQ)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

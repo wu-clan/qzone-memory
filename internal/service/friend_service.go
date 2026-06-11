@@ -1,14 +1,12 @@
 package service
 
 import (
-	"net/http"
+	"context"
 
-	"github.com/gin-gonic/gin"
 	"github.com/qzone-memory/internal/common"
 	"github.com/qzone-memory/internal/dao"
 	"github.com/qzone-memory/internal/dto"
 	"github.com/qzone-memory/internal/model"
-	"github.com/qzone-memory/pkg/response"
 )
 
 type FriendPageResponse struct {
@@ -22,28 +20,24 @@ type FriendPageResponse struct {
 	PageSize        int                  `json:"page_size"`
 }
 
-func GetFriendList(c *gin.Context) (*FriendPageResponse, *response.AppError) {
-	var req dto.QueryFriendsRequest
-	if err := bindQuery(c, &req); err != nil {
-		return nil, err
-	}
+func GetFriendList(ctx context.Context, req dto.QueryFriendsRequest) (*FriendPageResponse, error) {
 	if req.QQ == "" {
-		return nil, &response.AppError{Code: http.StatusBadRequest, Err: common.ErrInvalidParam}
+		return nil, common.ErrInvalidParam
 	}
 
 	page, pageSize := normalizePage(req.Page, req.PageSize)
 	offset := (page - 1) * pageSize
-	friends, total, err := dao.ListFriends(req.QQ, req.IncludeDeleted, offset, pageSize)
+	friends, total, err := dao.ListFriends(ctx, req.QQ, req.IncludeDeleted, offset, pageSize)
 	if err != nil {
-		return nil, &response.AppError{Code: http.StatusInternalServerError, Err: err}
+		return nil, err
 	}
-	groups, err := dao.ListFriendGroups(req.QQ)
+	groups, err := dao.ListFriendGroups(ctx, req.QQ)
 	if err != nil {
-		return nil, &response.AppError{Code: http.StatusInternalServerError, Err: err}
+		return nil, err
 	}
-	currentTotal, historicalTotal, err := dao.CountFriendsByStatus(req.QQ)
+	currentTotal, historicalTotal, err := dao.CountFriendsByStatus(ctx, req.QQ)
 	if err != nil {
-		return nil, &response.AppError{Code: http.StatusInternalServerError, Err: err}
+		return nil, err
 	}
 
 	groupTotal := 0

@@ -1,22 +1,32 @@
 package dao
 
 import (
+	"context"
+	"errors"
 	"github.com/qzone-memory/database"
+	"github.com/qzone-memory/internal/common"
 	"github.com/qzone-memory/internal/model"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func GetMessageByMessageID(messageID string) (*model.Message, error) {
+func GetMessageByMessageID(ctx context.Context, messageID string) (*model.Message, error) {
 	var message model.Message
-	err := database.DB.Where("message_id = ?", messageID).First(&message).Error
-	return &message, err
+	err := database.DB.WithContext(ctx).Where("message_id = ?", messageID).First(&message).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.ErrNotFound
+		}
+		return nil, err
+	}
+	return &message, nil
 }
 
-func ListMessages(userQQ string, offset, limit int) ([]*model.Message, int64, error) {
+func ListMessages(ctx context.Context, userQQ string, offset, limit int) ([]*model.Message, int64, error) {
 	var messages []*model.Message
 	var total int64
 
-	query := database.DB.Model(&model.Message{}).Where("user_qq = ?", userQQ)
+	query := database.DB.WithContext(ctx).Model(&model.Message{}).Where("user_qq = ?", userQQ)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

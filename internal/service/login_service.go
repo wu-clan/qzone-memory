@@ -1,20 +1,15 @@
 package service
 
 import (
+	"context"
 	"encoding/base64"
-	"errors"
-	"net/http"
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/qzone-memory/internal/common"
+	"github.com/qzone-memory/internal/client/qzone"
 	"github.com/qzone-memory/internal/dao"
 	"github.com/qzone-memory/internal/dto"
 	"github.com/qzone-memory/internal/model"
-	"github.com/qzone-memory/pkg/response"
-	"github.com/qzone-memory/qzone"
-	"gorm.io/gorm"
 )
 
 type LoginSession struct {
@@ -27,14 +22,14 @@ var (
 	loginMu      sync.Mutex
 )
 
-func GenerateLoginQRCode() (map[string]string, *response.AppError) {
+func GenerateLoginQRCode() (map[string]string, error) {
 	loginMu.Lock()
 	defer loginMu.Unlock()
 
 	client := qzone.NewLoginClient()
 	png, err := client.GetQRCode()
 	if err != nil {
-		return nil, &response.AppError{Code: http.StatusInternalServerError, Err: err}
+		return nil, err
 	}
 
 	loginSession = &LoginSession{
@@ -47,7 +42,7 @@ func GenerateLoginQRCode() (map[string]string, *response.AppError) {
 	}, nil
 }
 
-func PollLoginStatus() (*qzone.LoginStatus, *response.AppError) {
+func PollLoginStatus(ctx context.Context) (*qzone.LoginStatus, error) {
 	loginMu.Lock()
 	defer loginMu.Unlock()
 
@@ -67,7 +62,7 @@ func PollLoginStatus() (*qzone.LoginStatus, *response.AppError) {
 
 	status, err := loginSession.Client.PollStatus()
 	if err != nil {
-		return nil, &response.AppError{Code: http.StatusInternalServerError, Err: err}
+		return nil, err
 	}
 
 	if status.Status == 3 || status.Status == 4 {
@@ -77,7 +72,7 @@ func PollLoginStatus() (*qzone.LoginStatus, *response.AppError) {
 	if status.Status == 2 && status.LoginURL != "" {
 		result, err := loginSession.Client.DoLogin(status.LoginURL)
 		if err != nil {
-			return nil, &response.AppError{Code: http.StatusInternalServerError, Err: err}
+			return nil, err
 		}
 
 		user := &model.User{
@@ -89,8 +84,8 @@ func PollLoginStatus() (*qzone.LoginStatus, *response.AppError) {
 			LoginAt:   time.Now(),
 			ExpiredAt: time.Now().Add(24 * time.Hour),
 		}
-		if err := dao.UpsertUser(user); err != nil {
-			return nil, &response.AppError{Code: http.StatusInternalServerError, Err: err}
+		if err := dao.UpsertUser(ctx, user); err != nil {
+			return nil, err
 		}
 
 		status.QQ = result.QQ
@@ -100,22 +95,9 @@ func PollLoginStatus() (*qzone.LoginStatus, *response.AppError) {
 	return status, nil
 }
 
-func GetCurrentUser(c *gin.Context) (*model.User, *response.AppError) {
-	var req dto.QueryByQQRequest
-	if err := bindQuery(c, &req); err != nil {
-		return nil, err
-	}
+func GetCurrentUser(ctx context.Context, req dto.QueryByQQRequest) (*model.User, error) {
 	if err := validateQQ(req.QQ); err != nil {
 		return nil, err
 	}
-
-	user, err := dao.GetUserByQQ(req.QQ)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, &response.AppError{Code: http.StatusNotFound, Err: common.ErrNotFound}
-		}
-		return nil, &response.AppError{Code: http.StatusInternalServerError, Err: err}
-	}
-
-	return user, nil
+	return dao.GetUserByQQ(ctx, req.QQ)
 }

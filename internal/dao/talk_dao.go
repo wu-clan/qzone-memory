@@ -1,22 +1,32 @@
 package dao
 
 import (
+	"context"
+	"errors"
 	"github.com/qzone-memory/database"
+	"github.com/qzone-memory/internal/common"
 	"github.com/qzone-memory/internal/model"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func GetTalkByTalkID(talkID string) (*model.Talk, error) {
+func GetTalkByTalkID(ctx context.Context, talkID string) (*model.Talk, error) {
 	var talk model.Talk
-	err := database.DB.Where("talk_id = ?", talkID).First(&talk).Error
-	return &talk, err
+	err := database.DB.WithContext(ctx).Where("talk_id = ?", talkID).First(&talk).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.ErrNotFound
+		}
+		return nil, err
+	}
+	return &talk, nil
 }
 
-func ListTalks(userQQ string, offset, limit int) ([]*model.Talk, int64, error) {
+func ListTalks(ctx context.Context, userQQ string, offset, limit int) ([]*model.Talk, int64, error) {
 	var talks []*model.Talk
 	var total int64
 
-	query := database.DB.Model(&model.Talk{}).Where("user_qq = ?", userQQ)
+	query := database.DB.WithContext(ctx).Model(&model.Talk{}).Where("user_qq = ?", userQQ)
 
 	// 查询总数
 	if err := query.Count(&total).Error; err != nil {

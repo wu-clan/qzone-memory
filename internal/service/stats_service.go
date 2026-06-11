@@ -1,11 +1,10 @@
 package service
 
 import (
+	"context"
 	"sort"
 
-	"github.com/gin-gonic/gin"
 	"github.com/qzone-memory/internal/dto"
-	"github.com/qzone-memory/pkg/response"
 )
 
 type MemoryStats struct {
@@ -19,14 +18,10 @@ type YearCount struct {
 	Count int64 `json:"count"`
 }
 
-func GetMemoryStats(c *gin.Context) (*MemoryStats, *response.AppError) {
-	var req dto.QueryByQQRequest
-	if err := bindQuery(c, &req); err != nil {
-		return nil, err
-	}
-	items, err := buildMemoryTimeline(req.QQ, "all")
+func GetMemoryStats(ctx context.Context, req dto.QueryByQQRequest) (*MemoryStats, error) {
+	items, err := buildMemoryTimeline(ctx, req.QQ, "all")
 	if err != nil {
-		return nil, &response.AppError{Code: 500, Err: err}
+		return nil, err
 	}
 
 	stats := &MemoryStats{

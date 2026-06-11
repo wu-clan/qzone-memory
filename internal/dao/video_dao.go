@@ -1,15 +1,16 @@
 package dao
 
 import (
+	"context"
 	"github.com/qzone-memory/database"
 	"github.com/qzone-memory/internal/model"
 	"gorm.io/gorm/clause"
 )
 
-func ListVideos(userQQ string, offset, limit int) ([]*model.Video, int64, error) {
+func ListVideos(ctx context.Context, userQQ string, offset, limit int) ([]*model.Video, int64, error) {
 	var items []*model.Video
 	var total int64
-	query := database.DB.Model(&model.Video{}).Where("user_qq = ?", userQQ)
+	query := database.DB.WithContext(ctx).Model(&model.Video{}).Where("user_qq = ?", userQQ)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

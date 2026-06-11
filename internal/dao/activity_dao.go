@@ -1,22 +1,32 @@
 package dao
 
 import (
+	"context"
+	"errors"
 	"github.com/qzone-memory/database"
+	"github.com/qzone-memory/internal/common"
 	"github.com/qzone-memory/internal/model"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func GetActivityByFeedID(feedID string) (*model.Activity, error) {
+func GetActivityByFeedID(ctx context.Context, feedID string) (*model.Activity, error) {
 	var activity model.Activity
-	err := database.DB.Where("feed_id = ?", feedID).First(&activity).Error
-	return &activity, err
+	err := database.DB.WithContext(ctx).Where("feed_id = ?", feedID).First(&activity).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.ErrNotFound
+		}
+		return nil, err
+	}
+	return &activity, nil
 }
 
-func ListActivities(userQQ, feedType string, offset, limit int) ([]*model.Activity, int64, error) {
+func ListActivities(ctx context.Context, userQQ, feedType string, offset, limit int) ([]*model.Activity, int64, error) {
 	var activities []*model.Activity
 	var total int64
 
-	query := database.DB.Model(&model.Activity{}).Where("user_qq = ?", userQQ)
+	query := database.DB.WithContext(ctx).Model(&model.Activity{}).Where("user_qq = ?", userQQ)
 	if feedType != "" {
 		query = query.Where("feed_type = ?", feedType)
 	}

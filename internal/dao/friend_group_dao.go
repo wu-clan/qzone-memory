@@ -1,14 +1,15 @@
 package dao
 
 import (
+	"context"
 	"github.com/qzone-memory/database"
 	"github.com/qzone-memory/internal/model"
 	"gorm.io/gorm/clause"
 )
 
-func ListFriendGroups(userQQ string) ([]*model.FriendGroup, error) {
+func ListFriendGroups(ctx context.Context, userQQ string) ([]*model.FriendGroup, error) {
 	var groups []*model.FriendGroup
-	err := database.DB.Where("user_qq = ?", userQQ).Order("group_id ASC").Find(&groups).Error
+	err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Order("group_id ASC").Find(&groups).Error
 	return groups, err
 }
 

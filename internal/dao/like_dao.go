@@ -1,16 +1,17 @@
 package dao
 
 import (
+	"context"
 	"github.com/qzone-memory/database"
 	"github.com/qzone-memory/internal/model"
 	"gorm.io/gorm/clause"
 )
 
-func ListLikesByTarget(targetType, targetID string, offset, limit int) ([]*model.Like, int64, error) {
+func ListLikesByTarget(ctx context.Context, targetType, targetID string, offset, limit int) ([]*model.Like, int64, error) {
 	var likes []*model.Like
 	var total int64
 
-	query := database.DB.Model(&model.Like{}).Where("target_type = ? AND target_id = ?", targetType, targetID)
+	query := database.DB.WithContext(ctx).Model(&model.Like{}).Where("target_type = ? AND target_id = ?", targetType, targetID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

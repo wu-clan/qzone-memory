@@ -1,22 +1,32 @@
 package dao
 
 import (
+	"context"
+	"errors"
 	"github.com/qzone-memory/database"
+	"github.com/qzone-memory/internal/common"
 	"github.com/qzone-memory/internal/model"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func GetCommentByCommentID(commentID string) (*model.Comment, error) {
+func GetCommentByCommentID(ctx context.Context, commentID string) (*model.Comment, error) {
 	var comment model.Comment
-	err := database.DB.Where("comment_id = ?", commentID).First(&comment).Error
-	return &comment, err
+	err := database.DB.WithContext(ctx).Where("comment_id = ?", commentID).First(&comment).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, common.ErrNotFound
+		}
+		return nil, err
+	}
+	return &comment, nil
 }
 
-func ListCommentsByTarget(targetType, targetID string, offset, limit int) ([]*model.Comment, int64, error) {
+func ListCommentsByTarget(ctx context.Context, targetType, targetID string, offset, limit int) ([]*model.Comment, int64, error) {
 	var comments []*model.Comment
 	var total int64
 
-	query := database.DB.Model(&model.Comment{}).Where("target_type = ? AND target_id = ?", targetType, targetID)
+	query := database.DB.WithContext(ctx).Model(&model.Comment{}).Where("target_type = ? AND target_id = ?", targetType, targetID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

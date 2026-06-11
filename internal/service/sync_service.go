@@ -1,27 +1,26 @@
 package service
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/qzone-memory/database"
 	"math/rand"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/gin-gonic/gin"
+	"github.com/qzone-memory/database"
+	"github.com/qzone-memory/internal/client/qzone"
+	"github.com/qzone-memory/internal/common"
 	"github.com/qzone-memory/internal/dao"
 	"github.com/qzone-memory/internal/dto"
 	"github.com/qzone-memory/internal/model"
 	"github.com/qzone-memory/pkg/logger"
-	"github.com/qzone-memory/pkg/response"
-	"github.com/qzone-memory/qzone"
 	"go.uber.org/zap"
 )
 
@@ -41,11 +40,7 @@ var (
 	syncMu       sync.RWMutex
 )
 
-func StartSync(c *gin.Context) (map[string]string, *response.AppError) {
-	var req dto.SyncRequest
-	if err := bindJSON(c, &req); err != nil {
-		return nil, err
-	}
+func StartSync(ctx context.Context, req dto.SyncRequest) (map[string]string, error) {
 	if err := validateQQ(req.QQ); err != nil {
 		return nil, err
 	}
@@ -53,12 +48,12 @@ func StartSync(c *gin.Context) (map[string]string, *response.AppError) {
 	syncMu.Lock()
 	if syncProgress.Status == "running" {
 		syncMu.Unlock()
-		return nil, &response.AppError{Code: http.StatusConflict, Err: errors.New("同步任务正在进行中")}
+		return nil, common.ErrSyncRunning
 	}
-	user, err := dao.GetUserByQQ(req.QQ)
+	user, err := dao.GetUserByQQ(ctx, req.QQ)
 	if err != nil {
 		syncMu.Unlock()
-		return nil, &response.AppError{Code: http.StatusUnauthorized, Err: errors.New("授权失败，请重新登录")}
+		return nil, common.ErrUnauthorized
 	}
 	syncProgress = &SyncProgress{Status: "running", StartedAt: time.Now()}
 	syncMu.Unlock()
@@ -69,7 +64,7 @@ func StartSync(c *gin.Context) (map[string]string, *response.AppError) {
 	return map[string]string{"message": "同步任务已启动"}, nil
 }
 
-func GetSyncProgress() (*SyncProgress, *response.AppError) {
+func GetSyncProgress() (*SyncProgress, error) {
 	syncMu.RLock()
 	defer syncMu.RUnlock()
 	return syncProgress, nil

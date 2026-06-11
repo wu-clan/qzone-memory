@@ -2,23 +2,32 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/qzone-memory/internal/dto"
 	"github.com/qzone-memory/internal/service"
 	"github.com/qzone-memory/pkg/response"
 )
 
 func GetBlogList(c *gin.Context) {
-	data, err := service.GetBlogList(c)
+	var req dto.QueryByQQRequest
+	if !bindQuery(c, &req) {
+		return
+	}
+	data, err := service.GetBlogList(c.Request.Context(), req)
 	if err != nil {
-		response.Error(c, err.Code, err.Error())
+		writeServiceError(c, err)
 		return
 	}
 	response.Success(c, data)
 }
 
 func GetBlogDetail(c *gin.Context) {
-	data, err := service.GetBlogDetail(c)
+	var req dto.QueryByBlogIDRequest
+	if !bindQuery(c, &req) {
+		return
+	}
+	data, err := service.GetBlogDetail(c.Request.Context(), req)
 	if err != nil {
-		response.Error(c, err.Code, err.Error())
+		writeServiceError(c, err)
 		return
 	}
 	response.Success(c, data)

@@ -1,14 +1,13 @@
 package service
 
 import (
+	"context"
 	"sort"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/qzone-memory/database"
 	"github.com/qzone-memory/internal/dto"
 	"github.com/qzone-memory/internal/model"
-	"github.com/qzone-memory/pkg/response"
 )
 
 type MemoryItem struct {
@@ -26,16 +25,11 @@ type MemoryItem struct {
 	Source      string    `json:"source"`
 }
 
-func GetMemoryTimeline(c *gin.Context) (*dto.PageResponse[*MemoryItem], *response.AppError) {
-	var req dto.QueryMemoryRequest
-	if err := bindQuery(c, &req); err != nil {
-		return nil, err
-	}
-
+func GetMemoryTimeline(ctx context.Context, req dto.QueryMemoryRequest) (*dto.PageResponse[*MemoryItem], error) {
 	page, pageSize := normalizePage(req.Page, req.PageSize)
-	all, err := buildMemoryTimeline(req.QQ, req.Type)
+	all, err := buildMemoryTimeline(ctx, req.QQ, req.Type)
 	if err != nil {
-		return nil, &response.AppError{Code: 500, Err: err}
+		return nil, err
 	}
 
 	total := int64(len(all))
@@ -50,7 +44,7 @@ func GetMemoryTimeline(c *gin.Context) (*dto.PageResponse[*MemoryItem], *respons
 	return dto.NewPageResponse(all[start:end], total, page, pageSize), nil
 }
 
-func buildMemoryTimeline(userQQ, filterType string) ([]*MemoryItem, error) {
+func buildMemoryTimeline(ctx context.Context, userQQ, filterType string) ([]*MemoryItem, error) {
 	var activities []*model.Activity
 	var talks []*model.Talk
 	var blogs []*model.Blog
@@ -65,43 +59,43 @@ func buildMemoryTimeline(userQQ, filterType string) ([]*MemoryItem, error) {
 	var mentions []*model.Mention
 	var comments []*model.Comment
 
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&activities).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&activities).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&talks).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&talks).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&blogs).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&blogs).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&albums).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&albums).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&messages).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&messages).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&visitors).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&visitors).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&videos).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&videos).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&favorites).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&favorites).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&diaries).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&diaries).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&likes).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&likes).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&shares).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&shares).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&mentions).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&mentions).Error; err != nil {
 		return nil, err
 	}
-	if err := database.DB.Where("user_qq = ?", userQQ).Find(&comments).Error; err != nil {
+	if err := database.DB.WithContext(ctx).Where("user_qq = ?", userQQ).Find(&comments).Error; err != nil {
 		return nil, err
 	}
 
