@@ -24,6 +24,6 @@ func BatchUpsertVideos(items []*model.Video) error {
 	}
 	return database.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "video_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"user_qq", "title", "description", "url", "preview_url", "width", "height", "duration", "comment_count", "upload_time", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"user_qq", "title", "description", "url", "preview_url", "width", "height", "duration", "play_count", "comment_count", "upload_time", "updated_at"}),
 	}).Create(&items).Error
 }

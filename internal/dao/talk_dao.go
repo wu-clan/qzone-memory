@@ -48,7 +48,7 @@ func BatchUpsertTalks(talks []*model.Talk) error {
 	}
 	return database.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "talk_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"user_qq", "content", "images", "videos", "location", "device", "is_deleted", "like_count", "comment_count", "share_count", "publish_time", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"user_qq", "content", "images", "videos", "location", "device", "source_name", "source_id", "app_id", "is_deleted", "like_count", "comment_count", "share_count", "publish_time", "updated_at"}),
 	}).Create(&talks).Error
 }
 

@@ -1,6 +1,7 @@
 package qzone
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/qzone-memory/pkg/logger"
+	"github.com/qzone-memory/pkg/ratelimit"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
@@ -138,6 +140,13 @@ func (c *Client) request(method, urlStr string, params url.Values) ([]byte, erro
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
 	req.Header.Set("Referer", c.refererFor(urlStr))
 	req.Header.Set("Origin", "https://user.qzone.qq.com")
+
+	// 经全局限速器出站，与媒体下载共用同一闸门，统一克制频率
+	lim := ratelimit.Shared()
+	if acqErr := lim.Acquire(context.Background()); acqErr != nil {
+		return nil, acqErr
+	}
+	defer lim.Release()
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

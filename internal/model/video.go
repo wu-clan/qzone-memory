@@ -14,6 +14,7 @@ type Video struct {
 	Width        int       `json:"width"`
 	Height       int       `json:"height"`
 	Duration     int       `json:"duration"`
+	PlayCount    int       `json:"play_count"`
 	CommentCount int       `json:"comment_count"`
 	UploadTime   time.Time `gorm:"index" json:"upload_time"`
 	CreatedAt    time.Time `json:"created_at"`

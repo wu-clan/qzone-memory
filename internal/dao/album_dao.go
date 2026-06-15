@@ -41,6 +41,6 @@ func BatchUpsertAlbums(albums []*model.Album) error {
 	}
 	return database.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "album_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"user_qq", "name", "description", "cover_url", "photo_count", "is_deleted", "create_time", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"user_qq", "name", "description", "cover_url", "photo_count", "privacy", "is_deleted", "create_time", "last_upload_time", "updated_at"}),
 	}).Create(&albums).Error
 }

@@ -26,6 +26,6 @@ func BatchUpsertShares(shares []*model.Share) error {
 	}
 	return database.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "share_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"sharer_qq", "sharer_name", "comment", "share_time", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"sharer_qq", "sharer_name", "sharer_avatar", "comment", "share_time", "updated_at"}),
 	}).Create(&shares).Error
 }

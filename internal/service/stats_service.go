@@ -19,7 +19,7 @@ type YearCount struct {
 }
 
 func GetMemoryStats(ctx context.Context, req dto.QueryByQQRequest) (*MemoryStats, error) {
-	items, err := buildMemoryTimeline(ctx, req.QQ, "all")
+	items, err := buildMemoryTimeline(ctx, req.QQ, "content")
 	if err != nil {
 		return nil, err
 	}

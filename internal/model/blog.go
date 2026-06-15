@@ -17,6 +17,7 @@ type Blog struct {
 	CommentCount int       `json:"comment_count"`
 	ReadCount    int       `json:"read_count"`
 	PublishTime  time.Time `json:"publish_time"`
+	ModifyTime   time.Time `json:"modify_time"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

@@ -4,6 +4,10 @@ const app = {
   nickname: "",
   currentView: "memories",
   currentMemoryFilter: "all",
+  searchKeyword: "",
+  interactionKeyword: "",
+  searchTimer: null,
+  unifiedSearchRequestId: 0,
   loginMode: "qr",
   pollTimer: null,
   syncTimer: null,
@@ -21,7 +25,7 @@ const app = {
   infiniteObserver: null,
   deferredImageObserver: null,
   friendSearch: "",
-  friendFilter: "current",
+  friendFilter: "all",
   friendGroupFilter: "all",
   lastTimelineGroup: "",
   imagePlaceholder:
@@ -29,17 +33,31 @@ const app = {
   viewMeta: {
     memories: {
       kicker: "回忆时间线",
-      title: "完整回忆",
-      description: "按时间顺序回看 QQ 空间现有内容、历史动态和已删除痕迹",
-      emptyTitle: "暂无回忆内容",
-      emptyDescription: "当前还没有可展示的归档数据，请先执行同步",
+      title: "完整档案",
+      description: "按时间回看 QQ 空间的说说、相册、留言、互动与早已删除的痕迹。",
+      emptyTitle: "档案还是空的",
+      emptyDescription: "还没有可展示的数据，先同步一次，让说说、相册、留言和日志重新归档。",
     },
     friends: {
-      kicker: "好友关系",
-      title: "好友与历史联系人",
-      description: "查看当前好友、分组、特别关心，以及由历史互动反推的旧联系人",
-      emptyTitle: "暂无好友数据",
-      emptyDescription: "当前还没有可展示的好友或历史联系人数据，请先执行同步",
+      kicker: "旧友名册",
+      title: "好友与旧联系人",
+      description: "从联系人重新进入共同的回忆——当前好友、分组、特别关心，以及由历史互动留下的旧联系人。",
+      emptyTitle: "名册还是空的",
+      emptyDescription: "还没有可展示的好友或历史联系人，先同步一次联系人与互动记录。",
+    },
+    interactions: {
+      kicker: "好友互动",
+      title: "找一个人，看全部往来",
+      description: "输入昵称或 QQ，聚合 TA 的点赞、评论、留言、访客与内容提及。",
+      emptyTitle: "先输入一个好友",
+      emptyDescription: "在右上角搜索框输入昵称或 QQ，查看你和 TA 的全部互动。",
+    },
+    onthisday: {
+      kicker: "那年今日",
+      title: "历史上的今天",
+      description: "在过去的同月同日，你曾留下这些痕迹。",
+      emptyTitle: "今天还没有回忆",
+      emptyDescription: "历史上的今天暂时没有可展示的内容，换一天，或先同步更多数据。",
     },
   },
 
@@ -86,12 +104,85 @@ const app = {
     this.stopPoll();
 
     // 设置用户信息
+    const name = this.cleanName(this.nickname, "我的空间");
     const avatar = document.getElementById("user-avatar");
-    avatar.src = `https://q.qlogo.cn/headimg_dl?dst_uin=${this.qq}&spec=100`;
-    avatar.alt = `${this.nickname || this.qq} 的头像`;
-    document.getElementById("user-name").textContent = this.nickname || this.qq;
+    avatar.src = this.proxyImageUrl(`https://q.qlogo.cn/headimg_dl?dst_uin=${this.qq}&spec=100`);
+    avatar.alt = `${name} 的头像`;
+    avatar.onerror = () => {
+      avatar.onerror = null;
+      avatar.classList.add("is-failed");
+    };
+    document.getElementById("user-name").textContent = name;
+    const qqEl = document.getElementById("user-qq");
+    if (qqEl) qqEl.textContent = "QQ " + this.qq;
 
+    this.renderProfile();
+    this.renderRailWidgets();
     this.loadData();
+  },
+
+  // 右栏挂件：那年今日 + 最近访客（真头像）
+  async renderRailWidgets() {
+    const dateEl = document.getElementById("onthisday-date");
+    const now = new Date();
+    if (dateEl) dateEl.textContent = `${now.getMonth() + 1} 月 ${now.getDate()} 日`;
+    try {
+      const r = await this.api(`/api/v1/memory/on-this-day?qq=${this.qq}`);
+      const body = document.getElementById("onthisday-body");
+      if (body && r.code === 0 && r.data) {
+        const n = r.data.total || 0;
+        body.textContent = n > 0 ? `历史上的今天，你留下过 ${n} 条回忆。` : "历史上的今天暂无记录。";
+      }
+    } catch {}
+    try {
+      const v = await this.api(`/api/v1/visitors?qq=${this.qq}&page=1&page_size=8`);
+      const list = document.getElementById("visitor-list");
+      const tot = document.getElementById("visitor-total");
+      if (v.code === 0 && v.data) {
+        if (tot) tot.textContent = (v.data.total || 0) + " 位";
+        const items = Array.isArray(v.data.list) ? v.data.list : [];
+        if (list) {
+          list.innerHTML = items.slice(0, 8).map((it) => {
+            const qq = it.visitor_qq || "";
+            const name = this.cleanName(it.visitor_name, qq || "访客");
+            const av = this.proxyImageUrl(it.avatar || `https://q.qlogo.cn/headimg_dl?dst_uin=${qq}&spec=100`);
+            return `<div class="vz"><img src="${this.escapeHtml(av)}" onerror="this.style.visibility='hidden'"><span>${this.escapeHtml(name)}</span></div>`;
+          }).join("");
+        }
+      }
+    } catch {}
+  },
+
+  // 渲染个人中心头部（头像 + 昵称 + 说说/获赞/好友/年）
+  async renderProfile() {
+    const av = document.getElementById("pf-avatar");
+    if (av) {
+      av.src = this.proxyImageUrl(`https://q.qlogo.cn/headimg_dl?dst_uin=${this.qq}&spec=100`);
+      av.onerror = () => { av.onerror = null; av.removeAttribute("src"); };
+    }
+    const nameEl = document.getElementById("pf-name");
+    if (nameEl) nameEl.textContent = this.cleanName(this.nickname, "我的空间");
+    const subEl = document.getElementById("pf-sub");
+    if (subEl) subEl.textContent = "QQ " + this.qq + " · 这里收着你的全部回忆";
+
+    const set = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = this.formatCount(v || 0);
+    };
+    try {
+      const res = await this.api(`/api/v1/memory/report?qq=${this.qq}`);
+      if (res.code === 0 && res.data) {
+        const by = res.data.by_type || {};
+        set("pf-talks", by.talk || 0);
+        set("pf-likes", by.like || 0);
+        const y = document.getElementById("pf-years");
+        if (y) y.textContent = res.data.span_years || 0;
+      }
+    } catch {}
+    try {
+      const fr = await this.api(`/api/v1/friends?qq=${this.qq}&page=1&page_size=1`);
+      if (fr.code === 0 && fr.data) set("pf-friends", fr.data.total || 0);
+    } catch {}
   },
 
   logout() {
@@ -255,12 +346,12 @@ const app = {
 
     if (!text) {
       status.textContent = "";
-      status.className = "login-input-status hidden";
+      status.className = "form-hint hidden";
       return;
     }
 
     status.textContent = text;
-    status.className = "login-input-status";
+    status.className = "form-hint";
     if (type) status.classList.add(type);
   },
 
@@ -287,35 +378,38 @@ const app = {
   },
 
   // ===== 数据加载 =====
-  async loadData() {
+  async loadData(options = {}) {
+    const resetScroll = options.resetScroll !== false;
     this.page = 1;
     this.closeAlbumDetail();
     const timeline = document.getElementById("timeline");
     const friendsView = document.getElementById("friends-view");
     const empty = document.getElementById("empty-state");
-    const loadMore = document.getElementById("load-more");
+    const loadingState = document.getElementById("loading-state");
     const contentScroll = document.getElementById("content-scroll");
-    const memorySummary = document.getElementById("memory-summary");
+    const previousScrollTop = contentScroll ? contentScroll.scrollTop : 0;
 
-    if (contentScroll) contentScroll.scrollTop = 0;
+    if (resetScroll && contentScroll) contentScroll.scrollTop = 0;
 
-    timeline.classList.add("hidden");
-    friendsView.classList.add("hidden");
-    empty.classList.add("hidden");
-    loadMore.classList.add("hidden");
-    document.getElementById("memory-filters").classList.toggle(
-      "hidden",
-      this.currentView !== "memories",
-    );
-    if (memorySummary) {
-      memorySummary.classList.toggle("hidden", this.currentView !== "memories");
+    if (resetScroll) {
+      timeline.classList.add("hidden");
+      friendsView.classList.add("hidden");
+      empty.classList.add("hidden");
+      this.setLoadMoreState("hidden");
     }
-    document.getElementById("friend-toolbar").classList.toggle(
-      "hidden",
-      this.currentView !== "friends",
-    );
+
+    const isMemories = this.currentView === "memories";
+    const isFriends = this.currentView === "friends";
+    const isInteractions = this.currentView === "interactions";
+    document.getElementById("memory-filters").classList.toggle("hidden", !isMemories);
+    const memorySearchField = document.getElementById("memory-search-field");
+    if (memorySearchField) memorySearchField.classList.toggle("hidden", !(isMemories || isInteractions));
+    document.getElementById("friend-toolbar").classList.toggle("hidden", !isFriends);
+
+    this.updateUnifiedSearchField();
     this.updateContentHead();
-    this.updateSyncStatus("检查中", "正在确认是否存在进行中的同步任务");
+    this.updateRailHeader();
+    this.updateSyncStatus("检查中", "正在确认是否存在进行中的同步任务", "running");
     this.setSyncButtonState(false);
 
     // 先检查同步状态
@@ -327,27 +421,43 @@ const app = {
         return;
       }
     } else {
-      this.updateSyncStatus("状态未知", "暂时无法获取同步任务状态");
+      this.updateSyncStatus("状态未知", "暂时无法获取同步任务状态", "");
     }
 
+    if (loadingState && resetScroll) loadingState.classList.remove("hidden");
     const payload = await this.fetchCurrentViewData();
+    if (loadingState) loadingState.classList.add("hidden");
+
     const items = Array.isArray(payload) ? payload : payload?.list || [];
 
     if (!items || items.length === 0) {
+      timeline.classList.add("hidden");
+      friendsView.classList.add("hidden");
+      this.setLoadMoreState("hidden");
       empty.classList.remove("hidden");
       this.updateEmptyState();
+    } else if (this.currentView === "friends") {
+      this.renderFriends(payload);
+      timeline.classList.add("hidden");
+      empty.classList.add("hidden");
+      this.setLoadMoreState("hidden");
+      friendsView.classList.remove("hidden");
+      this.renderFriendRail(payload);
     } else {
-      if (this.currentView === "friends") {
-        this.renderFriends(payload);
-        friendsView.classList.remove("hidden");
+      this.renderTimeline(items);
+      empty.classList.add("hidden");
+      friendsView.classList.add("hidden");
+      timeline.classList.remove("hidden");
+      if (["memories", "interactions"].includes(this.currentView) && items.length >= this.pageSize) {
+        this.setLoadMoreState("idle");
       } else {
-        this.renderTimeline(items);
-        timeline.classList.remove("hidden");
-        if (items.length >= this.pageSize) {
-          loadMore.classList.remove("hidden");
-        }
-        this.setupInfiniteLoad();
+        this.setLoadMoreState("hidden");
       }
+      this.setupInfiniteLoad();
+    }
+
+    if (!resetScroll && contentScroll) {
+      this.restoreScrollTop(contentScroll, previousScrollTop);
     }
 
     this.loadCounts();
@@ -364,6 +474,13 @@ const app = {
     let url = "";
     if (this.currentView === "friends") {
       return this.fetchAllFriendsData();
+    } else if (this.currentView === "interactions") {
+      if (!this.interactionKeyword) return { list: [], total: 0 };
+      url = `/api/v1/memory/interactions?qq=${qq}&keyword=${encodeURIComponent(this.interactionKeyword)}&page=${p}&page_size=${ps}`;
+    } else if (this.currentView === "onthisday") {
+      url = `/api/v1/memory/on-this-day?qq=${qq}`;
+    } else if (this.searchKeyword) {
+      url = `/api/v1/memory/search?qq=${qq}&keyword=${encodeURIComponent(this.searchKeyword)}&page=${p}&page_size=${ps}`;
     } else {
       url = `/api/v1/memory/timeline?qq=${qq}&type=${encodeURIComponent(this.currentMemoryFilter)}&page=${p}&page_size=${ps}`;
     }
@@ -372,6 +489,10 @@ const app = {
       const res = await this.api(url);
       if (res.code !== 0 || !res.data) return this.currentView === "friends" ? null : [];
       if (this.currentView === "friends") return res.data;
+      if (this.currentView === "interactions") {
+        this.renderInteractionMeta(res.data);
+        return res.data.items || { list: [], total: 0 };
+      }
       return res.data.list || [];
     } catch {}
     return this.currentView === "friends" ? null : [];
@@ -391,7 +512,7 @@ const app = {
     try {
       while (true) {
         const res = await this.api(
-          `/api/v1/friends?qq=${qq}&page=${page}&page_size=${pageSize}`,
+          `/api/v1/friends?qq=${qq}&include_deleted=true&page=${page}&page_size=${pageSize}`,
         );
         if (res.code !== 0 || !res.data) break;
 
@@ -426,31 +547,55 @@ const app = {
     };
   },
 
-  async loadMore() {
-    if (this.loading || this.currentView !== "memories") return;
-    this.loading = true;
-    const loadMoreBtn = document.querySelector("#load-more .btn");
-    if (loadMoreBtn) {
-      loadMoreBtn.disabled = true;
-      loadMoreBtn.textContent = "加载中";
+  setLoadMoreState(state = "idle") {
+    const loadMore = document.getElementById("load-more");
+    if (!loadMore) return;
+    const button = loadMore.querySelector("button");
+    loadMore.classList.toggle("hidden", state === "hidden");
+    loadMore.classList.toggle("is-loading", state === "loading");
+    if (button) {
+      button.disabled = state === "loading";
+      button.textContent = state === "loading" ? "正在加载…" : "加载更多";
     }
+  },
+
+  restoreScrollTop(scroller, top) {
+    const restore = () => {
+      const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      scroller.scrollTop = Math.min(Math.max(top, 0), maxTop);
+    };
+    restore();
+    requestAnimationFrame(restore);
+  },
+
+  async loadMore() {
+    if (this.loading || !["memories", "interactions"].includes(this.currentView)) return;
+    this.loading = true;
+    if (this.infiniteObserver) this.infiniteObserver.disconnect();
+    this.setLoadMoreState("loading");
+    const previousPage = this.page;
     this.page++;
 
-    const items = await this.fetchCurrentViewData();
-    if (items && items.length > 0) {
-      this.appendTimeline(items);
-      if (items.length < this.pageSize) {
-        document.getElementById("load-more").classList.add("hidden");
+    try {
+      const payload = await this.fetchCurrentViewData();
+      const items = Array.isArray(payload) ? payload : payload?.list || [];
+      if (!items.length) {
+        this.setLoadMoreState("hidden");
+        return;
       }
-    } else {
-      document.getElementById("load-more").classList.add("hidden");
+      this.appendTimeline(items);
+      if (items.length >= this.pageSize) {
+        this.setLoadMoreState("idle");
+      } else {
+        this.setLoadMoreState("hidden");
+      }
+    } catch {
+      this.page = previousPage;
+      this.setLoadMoreState("idle");
+    } finally {
+      this.loading = false;
+      this.setupInfiniteLoad();
     }
-    this.setupInfiniteLoad();
-    if (loadMoreBtn) {
-      loadMoreBtn.disabled = false;
-      loadMoreBtn.textContent = "加载更多";
-    }
-    this.loading = false;
   },
 
   async loadCounts() {
@@ -465,226 +610,661 @@ const app = {
       friendCount = friendRes.code === 0 && friendRes.data ? friendRes.data.total || 0 : 0;
     } catch {}
 
-    const memoriesEl = document.getElementById("count-memories");
-    const friendsEl = document.getElementById("count-friends");
-    if (memoriesEl) memoriesEl.textContent = memoryCount > 0 ? memoryCount : "";
-    if (friendsEl) friendsEl.textContent = friendCount > 0 ? friendCount : "";
-    this.updateOverviewStats(memoryCount + friendCount);
+    this.setNavCount("nav-count-memories", memoryCount);
+    this.setNavCount("nav-count-friends", friendCount);
+  },
+
+  setNavCount(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = value > 0 ? this.formatCount(value) : "—";
   },
 
   async loadMemoryStats() {
     try {
       const res = await this.api(`/api/v1/memory/stats?qq=${this.qq}`);
       if (res.code !== 0 || !res.data) return;
-      const memorySummary = document.getElementById("memory-summary");
-      if (memorySummary) memorySummary.innerHTML = "";
+      if (this.currentView === "memories") this.renderMemoryRail(res.data);
     } catch {}
+  },
+
+  // ===== 右侧档案概览 =====
+  updateRailHeader() {
+    const kicker = document.getElementById("rail-kicker");
+    const totalLabel = document.getElementById("rail-total-label");
+    const breakdownTitle = document.getElementById("rail-breakdown-title");
+    const yearsCard = document.getElementById("rail-years-card");
+    const isFriends = this.currentView === "friends";
+    const isInteractions = this.currentView === "interactions";
+    if (kicker) kicker.textContent = isFriends ? "名册概览" : isInteractions ? "互动概览" : "档案概览";
+    if (totalLabel) totalLabel.textContent = isFriends ? "位联系人" : isInteractions ? "条互动" : "条回忆";
+    if (breakdownTitle) breakdownTitle.textContent = isFriends ? "名册构成" : isInteractions ? "互动构成" : "内容构成";
+    if (yearsCard) yearsCard.classList.toggle("hidden", isFriends || isInteractions);
+  },
+
+  renderRailBars(containerId, rows, max) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    const ceiling = Math.max(max || 0, 1);
+    el.innerHTML = rows
+      .map(([name, count, cls]) => {
+        const pct = count > 0 ? Math.max(4, Math.round((count / ceiling) * 100)) : 0;
+        return `<div class="rail-stat-row ${cls || ""}">
+          <div class="rail-stat-top">
+            <span class="rail-stat-name">${this.escapeHtml(name)}</span>
+            <span class="rail-stat-value">${this.formatCount(count)}</span>
+          </div>
+          <div class="rail-bar"><i style="width:${pct}%"></i></div>
+        </div>`;
+      })
+      .join("");
+  },
+
+  renderMemoryRail(stats) {
+    const total = stats.total || 0;
+    const byType = stats.by_type || {};
+    const byYear = Array.isArray(stats.by_year) ? stats.by_year : [];
+
+    const totalEl = document.getElementById("rail-total");
+    if (totalEl) totalEl.textContent = this.formatCount(total);
+
+    const labels = {
+      activity: "动态", talk: "说说", blog: "日志", album: "相册",
+      message: "留言", comment: "评论", visitor: "访客", video: "视频",
+      like: "点赞", favorite: "收藏", diary: "日记", mention: "提及", share: "转发",
+    };
+    const entries = Object.entries(byType)
+      .filter(([, v]) => v > 0)
+      .sort((a, b) => b[1] - a[1]);
+
+    if (entries.length) {
+      const rows = entries.map(([type, count]) => [
+        labels[type] || type,
+        count,
+        `type-${type}`,
+      ]);
+      this.renderRailBars("rail-stats", rows, entries[0][1]);
+    }
+
+    const yearsEl = document.getElementById("rail-years");
+    if (yearsEl && byYear.length) {
+      const maxYear = byYear.reduce((m, y) => Math.max(m, y.count || 0), 1);
+      yearsEl.innerHTML = byYear
+        .map((y) => {
+          const pct = Math.max(3, Math.round(((y.count || 0) / maxYear) * 100));
+          return `<div class="rail-year-row">
+            <span class="rail-year-label">${this.escapeHtml(String(y.year))}</span>
+            <div class="rail-year-bar"><i style="width:${pct}%"></i></div>
+            <span class="rail-year-count">${this.formatCount(y.count || 0)}</span>
+          </div>`;
+        })
+        .join("");
+    }
+  },
+
+  renderFriendRail(data) {
+    const total = data.total || (data.list ? data.list.length : 0);
+    const special = (data.list || []).filter((f) => f && f.is_special_care).length;
+
+    const totalEl = document.getElementById("rail-total");
+    if (totalEl) totalEl.textContent = this.formatCount(total);
+
+    const rows = [
+      ["当前好友", data.current_total || 0, "type-talk"],
+      ["历史联系人", data.historical_total || 0, "type-diary"],
+      ["好友分组", data.group_total || 0, "type-activity"],
+      ["特别关心", special, "type-like"],
+    ];
+    const max = rows.reduce((m, r) => Math.max(m, r[1]), 1);
+    this.renderRailBars("rail-stats", rows, max);
   },
 
   switchView(view, event) {
     if (event) event.preventDefault();
-    document
-      .querySelectorAll(".nav-item")
-      .forEach((el) => el.classList.remove("active"));
-    const clicked = document.querySelector(`.nav-item[data-view="${view}"]`);
-    if (clicked) clicked.classList.add("active");
     this.currentView = view;
+    this.clearMemorySearch();
+    this.setActiveNav(view);
     this.page = 1;
     this.loadData();
+    if (view === "interactions") {
+      setTimeout(() => document.getElementById("memory-search")?.focus(), 50);
+    }
+  },
+
+  setActiveNav(view = this.currentView) {
+    const navView = view === "interactions" ? "memories" : view;
+    document
+      .querySelectorAll(".nav-item")
+      .forEach((el) => el.classList.toggle("active", el.dataset.view === navView));
   },
 
   switchMemoryFilter(filter, event) {
     if (event) event.preventDefault();
     this.currentMemoryFilter = filter;
+    this.clearMemorySearch();
     document
-      .querySelectorAll("#memory-filters .filter-chip")
+      .querySelectorAll("#memory-filters .chip")
       .forEach((el) => el.classList.toggle("active", el.dataset.filter === filter));
     this.loadData();
   },
 
+  handleMemorySearch(event) {
+    const value = (event.target.value || "").trim();
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => {
+      this.runUnifiedSearch(value);
+    }, 300);
+  },
+
+  clearMemorySearch() {
+    this.unifiedSearchRequestId++;
+    this.searchKeyword = "";
+    this.interactionKeyword = "";
+    if (this.searchTimer) {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = null;
+    }
+    const input = document.getElementById("memory-search");
+    if (input) input.value = "";
+  },
+
+  handleUnifiedSearchKey(event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (this.searchTimer) {
+        clearTimeout(this.searchTimer);
+        this.searchTimer = null;
+      }
+      const input = document.getElementById("memory-search");
+      this.runUnifiedSearch((input?.value || "").trim(), { forceProbe: true });
+    }
+  },
+
+  async runUnifiedSearch(keyword, options = {}) {
+    const value = (keyword || "").trim();
+    const requestId = ++this.unifiedSearchRequestId;
+
+    if (!value) {
+      this.currentView = "memories";
+      this.searchKeyword = "";
+      this.interactionKeyword = "";
+      this.page = 1;
+      this.setActiveNav("memories");
+      this.loadData();
+      return;
+    }
+
+    let useInteractions = this.isQQSearch(value);
+    if (!useInteractions && this.shouldProbeFriendSearch(value, options.forceProbe)) {
+      const data = await this.fetchFriendSearchProbe(value);
+      if (requestId !== this.unifiedSearchRequestId) return;
+      useInteractions = (data.friend_candidates || []).length > 0;
+    }
+
+    this.currentView = useInteractions ? "interactions" : "memories";
+    this.searchKeyword = useInteractions ? "" : value;
+    this.interactionKeyword = useInteractions ? value : "";
+    this.page = 1;
+    this.setActiveNav(this.currentView);
+    this.loadData();
+  },
+
+  isQQSearch(keyword) {
+    return /^\d{5,12}$/.test((keyword || "").trim());
+  },
+
+  shouldProbeFriendSearch(keyword, forceProbe = false) {
+    const value = (keyword || "").trim();
+    if (!value) return false;
+    if (forceProbe) return true;
+    return Array.from(value).length >= 2;
+  },
+
+  async fetchFriendSearchProbe(keyword) {
+    try {
+      const res = await this.api(
+        `/api/v1/memory/interactions?qq=${this.qq}&keyword=${encodeURIComponent(keyword)}&page=1&page_size=1&candidates_only=true`,
+      );
+      if (res.code === 0 && res.data) return res.data;
+    } catch {}
+    return { friend_candidates: [] };
+  },
+
+  searchInteractions() {
+    const input = document.getElementById("memory-search");
+    const keyword = (input?.value || "").trim();
+    this.searchKeyword = "";
+    this.interactionKeyword = keyword;
+    this.currentView = "interactions";
+    this.setActiveNav("interactions");
+    this.page = 1;
+    this.loadData();
+  },
+
+  searchInteractionsFor(keyword) {
+    const input = document.getElementById("memory-search");
+    if (input) input.value = keyword || "";
+    this.interactionKeyword = keyword || "";
+    this.searchInteractions();
+  },
+
+  renderInteractionMeta(data = {}) {
+    const total = data.items?.total || 0;
+    const first = (data.friend_candidates || [])[0];
+
+    const totalEl = document.getElementById("rail-total");
+    if (totalEl) totalEl.textContent = this.formatCount(total);
+    const title = document.getElementById("rail-breakdown-title");
+    if (title) title.textContent = "互动构成";
+    const stats = data.stats || {};
+    const rows = Object.entries(stats)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => [this.typeLabels[type] || type, count, `type-${type}`]);
+    this.renderRailBars("rail-stats", rows, rows[0]?.[1] || 1);
+
+    if (first) {
+      const name = this.cleanName(first.name || first.remark, first.qq);
+      const status = first.is_deleted || first.is_current === false ? "历史联系人" : "当前好友";
+      const group = first.group_name ? ` · ${first.group_name}` : "";
+      const title = document.getElementById("content-title");
+      const desc = document.getElementById("content-description");
+      if (title) title.textContent = `与 “${name}” 的互动`;
+      if (desc) desc.textContent = `QQ ${first.qq} · ${status}${group} · 找到 ${this.formatCount(total)} 条点赞、评论、留言、访客与内容提及`;
+    }
+  },
+
   // ===== 时间线渲染 =====
+  typeLabels: {
+    activity: "动态", talk: "说说", blog: "日志", album: "相册",
+    message: "留言", comment: "评论", visitor: "访客", video: "视频",
+    like: "点赞", favorite: "收藏", diary: "日记", photo: "照片",
+    mention: "提及", share: "转发", other: "动态",
+  },
+
+  itemTime(item) {
+    return (
+      item.publish_time ||
+      item.message_time ||
+      item.mention_time ||
+      item.create_time ||
+      item.created_at ||
+      ""
+    );
+  },
+
   renderTimeline(items) {
     const container = document.getElementById("timeline");
     container.innerHTML = "";
-    let currentGroup = "";
-    let currentSection = null;
+    let currentKey = "";
+    let section = null;
     items.forEach((item) => {
-      const group = this.formatTimelineGroup(
-        item.publish_time ||
-          item.message_time ||
-          item.mention_time ||
-          item.create_time ||
-          item.created_at,
-      );
-      if (group !== currentGroup) {
-        currentGroup = group;
-        currentSection = this.createTimelineSection(group);
-        container.appendChild(currentSection);
+      const key = this.formatTimelineGroup(this.itemTime(item));
+      if (key !== currentKey || !section) {
+        currentKey = key;
+        section = this.createTimelineSection(key);
+        container.appendChild(section);
       }
-      currentSection
-        .querySelector(".timeline-section-items")
-        .appendChild(this.createTimelineItem(item));
+      this.addItemToSection(section, item);
     });
-    this.lastTimelineGroup = currentGroup;
+    this.lastTimelineGroup = currentKey;
     this.observeDeferredImages(container);
   },
 
   appendTimeline(items) {
     const container = document.getElementById("timeline");
-    let lastGroup = this.lastTimelineGroup || "";
-    let currentSection = container.lastElementChild;
+    let lastKey = this.lastTimelineGroup || "";
+    let section = container.lastElementChild;
     items.forEach((item) => {
-      const group = this.formatTimelineGroup(
-        item.publish_time ||
-          item.message_time ||
-          item.mention_time ||
-          item.create_time ||
-          item.created_at,
-      );
-      if (group !== lastGroup) {
-        lastGroup = group;
-        currentSection = this.createTimelineSection(group);
-        container.appendChild(currentSection);
+      const key = this.formatTimelineGroup(this.itemTime(item));
+      if (key !== lastKey || !section) {
+        lastKey = key;
+        section = this.createTimelineSection(key);
+        container.appendChild(section);
       }
-      currentSection
-        .querySelector(".timeline-section-items")
-        .appendChild(this.createTimelineItem(item));
+      this.addItemToSection(section, item);
     });
-    this.lastTimelineGroup = lastGroup;
+    this.lastTimelineGroup = lastKey;
     this.observeDeferredImages(container);
   },
 
-  createTimelineSection(label) {
+  createTimelineSection(key) {
     const div = document.createElement("div");
     div.className = "timeline-section";
-    div.dataset.group = label;
-    div.innerHTML = `
-      <div class="timeline-group" data-group="${this.escapeHtml(label)}">
-        <span>${this.escapeHtml(label)}</span>
-      </div>
-      <div class="timeline-section-items"></div>
-    `;
+    div.dataset.group = key;
+    let railHTML;
+    if (key === "earlier") {
+      railHTML = `<span class="timeline-rail-year">更早</span>
+        <span class="timeline-rail-month">以前</span>
+        <span class="timeline-rail-count" data-count>0 条</span>`;
+    } else {
+      const [year, month] = key.split("-");
+      railHTML = `<span class="timeline-rail-year">${this.escapeHtml(year)}</span>
+        <span class="timeline-rail-month">${this.escapeHtml(month)} 月</span>
+        <span class="timeline-rail-count" data-count>0 条</span>`;
+    }
+    div.innerHTML = `<div class="timeline-rail">${railHTML}</div>
+      <div class="timeline-items"></div>`;
     return div;
+  },
+
+  addItemToSection(section, item) {
+    const items = section.querySelector(".timeline-items");
+    items.appendChild(this.createTimelineItem(item));
+    const counter = section.querySelector("[data-count]");
+    if (counter) counter.textContent = `${items.childElementCount} 条`;
   },
 
   createTimelineItem(item) {
-    const div = document.createElement("div");
-    div.className = "timeline-item" + (item.is_deleted ? " deleted" : "");
-
     const type = this.detectType(item);
-    const typeLabel = {
-      activity: "动态归档",
-      talk: "说说",
-      blog: "日志",
-      album: "相册",
-      message: "留言",
-      comment: "评论",
-      visitor: "访客",
-      video: "视频",
-      like: "点赞",
-      favorite: "收藏",
-      diary: "日记",
-      photo: "照片",
-      mention: "提及",
-      share: "转发",
-      other: "动态",
-    };
-    const time = this.formatTime(
-      item.publish_time ||
-        item.message_time ||
-        item.mention_time ||
-        item.create_time ||
-        item.created_at,
+    const div = document.createElement("article");
+    div.className = `timeline-item post type-${type}` + (item.is_deleted ? " deleted" : "");
+
+    const time = this.formatTime(this.itemTime(item));
+    const author = this.displayAuthor(item);
+    const authorQQ = item.author_qq || item.user_qq || this.qq;
+    const title = String(item.title || "").trim();
+    const content = String(item.content || item.summary || item.name || "").trim();
+
+    let textHTML = "";
+    if (type === "album") {
+      textHTML = title ? `<div class="post-text">${this.escapeHtml(title)}</div>` : "";
+    } else if (type === "blog" && title) {
+      textHTML = `<div class="post-text"><b>${this.escapeHtml(title)}</b>${content ? `<br>${this.escapeHtml(content)}` : ""}</div>`;
+    } else if (title && title !== content && title !== author) {
+      textHTML = `<div class="post-text">${this.escapeHtml(title)}${content ? `<br>${this.escapeHtml(content)}` : ""}</div>`;
+    } else if (content) {
+      textHTML = `<div class="post-text">${this.escapeHtml(content)}</div>`;
+    }
+
+    const compact = ["like", "comment", "share", "mention", "visitor"].includes(type);
+    const mediaHTML = type === "album" ? this.buildAlbumCover(item) : this.buildImagesBlock(item, compact);
+    const actionHTML = this.buildPostActions(item, type);
+    const deletedHTML = item.is_deleted ? `<span class="deleted-badge">已删除</span>` : "";
+    const targetType = item.target_type || type;
+    const targetId = item.target_id || item.id || "";
+
+    const avatar = this.buildDeferredImageTag(
+      this.proxyImageUrl(`https://q.qlogo.cn/headimg_dl?dst_uin=${authorQQ}&spec=100`),
+      { className: "av timeline-avatar lazy-img" },
     );
-    const content =
-      item.content || item.title || item.name || item.summary || "";
-    const authorQQ = item.user_qq || item.author_qq || this.qq;
 
-    let imagesHTML = "";
-    if (item.images) {
-      try {
-        const imgs =
-          typeof item.images === "string"
-            ? JSON.parse(item.images)
-            : item.images;
-        const filteredImgs = Array.isArray(imgs)
-          ? imgs.filter((url) => !this.isAvatarLikeUrl(url))
-          : [];
-        if (filteredImgs.length > 0) {
-          const allUrls = filteredImgs.map((url) => this.proxyImageUrl(url));
-          const urlsJson = JSON.stringify(allUrls).replace(/'/g, "&#39;");
-          const preview = this.buildDeferredImageTag(allUrls[0], {
-            className: "deferred-image",
-            onclick: `app.openLightbox(${urlsJson.replace(/"/g, "&quot;")}, 0)`,
-          });
-          const countBadge = filteredImgs.length > 1
-            ? `<span class="timeline-image-count">共 ${filteredImgs.length} 张</span>`
-            : "";
-          imagesHTML = `<div class="timeline-images grid-1 timeline-images-compact">${preview}${countBadge}</div>`;
-        }
-      } catch {}
-    }
-
-    if (!imagesHTML && (item.cover || item.preview_url)) {
-      const cover = item.cover || item.preview_url;
-      if (!this.isAvatarLikeUrl(cover)) {
-        const proxied = this.proxyImageUrl(cover);
-        imagesHTML = `<div class="timeline-images grid-1">${this.buildDeferredImageTag(proxied, {
-          className: "deferred-image",
-        })}</div>`;
-      }
-    }
-
-    // 相册：可点击的封面卡片
-    if (type === "album" && (item.album_id || item.id)) {
-      const albumId = item.album_id || item.id;
-      const coverProxied = item.cover_url || item.cover ? this.proxyImageUrl(item.cover_url || item.cover) : "";
-      const albumName = this.escapeHtml(item.name || item.title || "未命名相册");
-      imagesHTML = `<div class="album-cover-card" onclick="app.openAlbumDetail('${albumId}', '${albumName.replace(/'/g, "\\'")}')">
-        ${coverProxied ? this.buildDeferredImageTag(coverProxied, {
-          className: "deferred-image",
-        }) : ""}
-        <div class="album-cover-info">
-          <div class="album-name">${albumName}</div>
-          <div class="album-count">点击查看相册内容</div>
-        </div>
-      </div>`;
-    }
-
-    const deletedBadge = item.is_deleted
-      ? '<span class="deleted-badge">已删除</span>'
-      : "";
-
+    div.dataset.targetType = targetType;
+    div.dataset.targetId = targetId;
     div.innerHTML = `
-            <div class="timeline-header">
-                ${this.buildDeferredImageTag(
-                  this.proxyImageUrl(`https://q.qlogo.cn/headimg_dl?dst_uin=${authorQQ}&spec=100`),
-                  { className: "timeline-avatar deferred-image" },
-                )}
-                <div class="timeline-meta">
-                    <div class="timeline-author">${this.escapeHtml(item.author_name || this.nickname || this.qq)}</div>
-                    <div class="timeline-time">${time}</div>
-                </div>
-                <span class="timeline-type type-${type}">${typeLabel[type] || "动态"}</span>
-                ${deletedBadge}
-            </div>
-            <div class="timeline-body">${this.escapeHtml(content)}</div>
-            ${imagesHTML}
-            <div class="timeline-footer">
-                ${item.like_count !== undefined ? `<span class="timeline-stat">点赞 ${item.like_count || 0}</span>` : ""}
-                ${item.comment_count !== undefined ? `<span class="timeline-stat">评论 ${item.comment_count || 0}</span>` : ""}
-                ${item.share_count !== undefined ? `<span class="timeline-stat">转发 ${item.share_count || 0}</span>` : ""}
-                ${item.read_count !== undefined ? `<span class="timeline-stat">阅读 ${item.read_count || 0}</span>` : ""}
-                ${item.photo_count !== undefined ? `<span class="timeline-stat">照片 ${item.photo_count || 0}</span>` : ""}
-                ${item.source ? `<span class="timeline-stat">来源 ${this.escapeHtml(item.source)}</span>` : ""}
-            </div>
-        `;
+      <div class="post-head timeline-head">
+        ${avatar}
+        <div class="post-meta">
+          <div class="nm timeline-author">${this.escapeHtml(author)}</div>
+          <div class="tm timeline-time">${this.escapeHtml(time)}</div>
+        </div>
+      </div>
+      ${textHTML}
+      ${mediaHTML}
+      ${actionHTML}
+      <div class="interaction-detail hidden"></div>
+      ${deletedHTML}`;
 
     return div;
   },
 
+  buildPostActions(item, type) {
+    if (type === "visitor") return "";
+    const likes = Array.isArray(item.like_preview) ? item.like_preview : [];
+    const comments = Array.isArray(item.comment_preview) ? item.comment_preview : [];
+    if (type === "message" && !likes.length && !comments.length && !item.can_expand) return "";
+
+    const like = Number(item.like_count || 0);
+    const comment = Number(item.comment_count || 0);
+    const share = Number(item.share_count || 0);
+    const targetType = item.target_type || type;
+    const targetId = item.target_id || item.id || "";
+    const canExpand = Boolean(targetType && targetId && (like > 0 || comment > 0 || share > 0 || item.can_expand));
+    const expandCall = canExpand
+      ? `app.toggleMemoryInteractions(this, '${this.jsString(targetType)}', '${this.jsString(targetId)}')`
+      : "";
+    const labelLike = type === "like" ? "已赞" : `赞${like ? " " + this.formatCount(like) : ""}`;
+    const labelComment = type === "comment" ? "评论" : `评论${comment ? " " + this.formatCount(comment) : ""}`;
+    const labelShare = `转发${share ? " " + this.formatCount(share) : ""}`;
+    const previewHTML = `${this.buildLikePreviewLine(item, likes, like)}${this.buildCommentPreviewBox(comments)}`;
+    return `<div class="barwrap">
+      <div class="bar">
+        <button type="button" aria-label="赞" ${expandCall ? `onclick="${expandCall}"` : ""}>
+          <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9C.8 8.4 2.6 5 6 5c2 0 3.2 1.2 4 2.3C10.8 6.2 12 5 14 5c3.4 0 5.2 3.4 3.5 7C19 16.5 12 21 12 21z"/></svg>${this.escapeHtml(labelLike)}
+        </button>
+        <button type="button" aria-label="评论" ${expandCall ? `onclick="${expandCall}"` : ""}>
+          <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.5 7.2L3 21l1.8-6.5A8 8 0 1 1 21 12z"/></svg>${this.escapeHtml(labelComment)}
+        </button>
+        <button type="button" aria-label="转发" ${expandCall ? `onclick="${expandCall}"` : ""}>
+          <svg viewBox="0 0 24 24"><path d="M4 9l5-5v3c7 0 11 4 11 11-2.5-4-6-5-11-5v3z"/></svg>${this.escapeHtml(labelShare)}
+        </button>
+      </div>
+      ${previewHTML}
+    </div>`;
+  },
+
+  async toggleMemoryInteractions(button, targetType, targetId) {
+    const card = button?.closest?.(".timeline-item");
+    const box = card?.querySelector?.(".interaction-detail");
+    if (!card || !box || !targetType || !targetId) return;
+    if (box.dataset.loaded === "1") {
+      box.classList.toggle("hidden");
+      return;
+    }
+    box.classList.remove("hidden");
+    box.innerHTML = `<div class="interaction-loading">正在展开完整互动...</div>`;
+    try {
+      const res = await this.api(
+        `/api/v1/memory/item/interactions?qq=${this.qq}&target_type=${encodeURIComponent(targetType)}&target_id=${encodeURIComponent(targetId)}`,
+      );
+      if (res.code !== 0 || !res.data) {
+        box.innerHTML = `<div class="interaction-empty">暂时没有可展开的互动</div>`;
+        return;
+      }
+      box.dataset.loaded = "1";
+      box.innerHTML = this.renderInteractionDetail(res.data);
+      this.observeDeferredImages(box);
+    } catch {
+      box.innerHTML = `<div class="interaction-empty">互动加载失败，稍后再试</div>`;
+    }
+  },
+
+  renderInteractionDetail(data = {}) {
+    const likes = Array.isArray(data.likes) ? data.likes : [];
+    const comments = Array.isArray(data.comments) ? data.comments : [];
+    const shares = Array.isArray(data.shares) ? data.shares : [];
+    const sections = [];
+    if (likes.length) {
+      sections.push(`<section class="interaction-section">
+        <h4>赞过的人 <span>${this.formatCount(likes.length)}</span></h4>
+        <div class="interaction-people">${likes.map((item) => this.renderInteractionPerson(item)).join("")}</div>
+      </section>`);
+    }
+    if (comments.length) {
+      sections.push(`<section class="interaction-section">
+        <h4>评论 <span>${this.formatCount(comments.length)}</span></h4>
+        <div class="interaction-comments">${comments.map((item) => this.renderInteractionComment(item)).join("")}</div>
+      </section>`);
+    }
+    if (shares.length) {
+      sections.push(`<section class="interaction-section">
+        <h4>转发 <span>${this.formatCount(shares.length)}</span></h4>
+        <div class="interaction-comments">${shares.map((item) => this.renderInteractionShare(item)).join("")}</div>
+      </section>`);
+    }
+    return sections.length ? sections.join("") : `<div class="interaction-empty">这条回忆还没有可展开的互动</div>`;
+  },
+
+  renderInteractionPerson(item = {}) {
+    const qq = item.qq || "";
+    const name = this.cleanName(item.name, qq || "好友");
+    const avatar = this.buildDeferredImageTag(
+      this.proxyImageUrl(item.avatar || (qq ? `https://q.qlogo.cn/headimg_dl?dst_uin=${qq}&spec=100` : "")),
+      { className: "lazy-img" },
+    );
+    return `<button class="interaction-person" type="button" onclick="app.searchInteractionsFor('${this.jsString(qq || name)}')">
+      ${avatar}
+      <span>${this.escapeHtml(name)}</span>
+    </button>`;
+  },
+
+  renderInteractionComment(item = {}) {
+    const qq = item.qq || "";
+    const name = this.cleanName(item.name, qq || "好友");
+    const time = this.formatTime(item.time || "");
+    const replyTo = this.cleanName(item.reply_to_name, "");
+    const content = String(item.content || "").trim();
+    const avatar = this.buildDeferredImageTag(
+      this.proxyImageUrl(item.avatar || (qq ? `https://q.qlogo.cn/headimg_dl?dst_uin=${qq}&spec=100` : "")),
+      { className: "lazy-img" },
+    );
+    return `<article class="interaction-comment">
+      ${avatar}
+      <div>
+        <div class="interaction-comment-head">
+          <button type="button" onclick="app.searchInteractionsFor('${this.jsString(qq || name)}')">${this.escapeHtml(name)}</button>
+          <span>${this.escapeHtml(time)}</span>
+        </div>
+        <p>${replyTo ? `回复 ${this.escapeHtml(replyTo)}：` : ""}${this.escapeHtml(content || "评论了这条回忆")}</p>
+      </div>
+    </article>`;
+  },
+
+  renderInteractionShare(item = {}) {
+    const qq = item.qq || "";
+    const name = this.cleanName(item.name, qq || "好友");
+    const time = this.formatTime(item.time || "");
+    const comment = String(item.comment || "").trim();
+    const avatar = this.buildDeferredImageTag(
+      this.proxyImageUrl(item.avatar || (qq ? `https://q.qlogo.cn/headimg_dl?dst_uin=${qq}&spec=100` : "")),
+      { className: "lazy-img" },
+    );
+    return `<article class="interaction-comment">
+      ${avatar}
+      <div>
+        <div class="interaction-comment-head">
+          <button type="button" onclick="app.searchInteractionsFor('${this.jsString(qq || name)}')">${this.escapeHtml(name)}</button>
+          <span>${this.escapeHtml(time)}</span>
+        </div>
+        <p>${this.escapeHtml(comment || "转发了这条回忆")}</p>
+      </div>
+    </article>`;
+  },
+
+  buildLikePreviewLine(item, likes, total) {
+    if (!likes.length || !total) return "";
+    const avatars = likes
+      .map((like) => {
+        const raw = like.avatar || (like.qq ? `https://q.qlogo.cn/headimg_dl?dst_uin=${like.qq}&spec=100` : "");
+        if (!raw) return "";
+        return this.buildDeferredImageTag(this.proxyImageUrl(raw), { className: "lazy-img" });
+      })
+      .filter(Boolean)
+      .join("");
+    const names = likes
+      .map((like) => this.cleanName(like.name, like.qq || "好友"))
+      .filter(Boolean)
+      .slice(0, 3);
+    const text = total > names.length
+      ? `${names.join("、")} 等 ${this.formatCount(total)} 人觉得很赞`
+      : `${names.join("、")}觉得很赞`;
+    return `<div class="likeline">
+      <span class="heart">♥</span>
+      ${avatars ? `<span class="avs">${avatars}</span>` : ""}
+      <span>${this.escapeHtml(text)}</span>
+    </div>`;
+  },
+
+  buildCommentPreviewBox(comments) {
+    const rows = comments
+      .filter((comment) => String(comment.content || "").trim())
+      .slice(0, 2)
+      .map((comment) => {
+        const name = this.cleanName(comment.name, comment.qq || "好友");
+        const content = String(comment.content || "").trim();
+        const replyToName = this.cleanName(comment.reply_to_name, "");
+        const reply = replyToName
+          ? `<span class="reply">回复 ${this.escapeHtml(replyToName)}：${this.escapeHtml(content)}</span>`
+          : this.escapeHtml(content);
+        return `<div class="cmt"><b>${this.escapeHtml(name)}：</b>${reply}</div>`;
+      })
+      .join("");
+    return rows ? `<div class="cmts">${rows}</div>` : "";
+  },
+
+  buildImagesBlock(item, compact = false) {
+    let urls = [];
+    if (item.images) {
+      try {
+        const arr =
+          typeof item.images === "string" ? JSON.parse(item.images) : item.images;
+        if (Array.isArray(arr)) urls = arr;
+      } catch {}
+    }
+    urls = urls.filter((u) => u && !this.isDecorativeImage(u));
+    if (urls.length === 0) {
+      const cover = item.cover || item.preview_url || "";
+      if (cover && !this.isDecorativeImage(cover)) urls = [cover];
+    }
+    if (urls.length === 0) return "";
+
+    const proxied = urls.map((u) => this.proxyImageUrl(u));
+    const json = JSON.stringify(proxied).replace(/"/g, "&quot;");
+
+    if (compact) {
+      const click = `app.openLightbox(${json}, 0)`.replace(/"/g, "&quot;");
+      const img = this.buildDeferredImageTag(proxied[0], { className: "lazy-img" });
+      const more =
+        proxied.length > 1 ? `<span class="img-more">+${proxied.length - 1}</span>` : "";
+      return `<div class="timeline-images compact"><div class="img-cell" onclick="${click}">${img}${more}</div></div>`;
+    }
+
+    const shown = proxied.slice(0, 3);
+    const cols = Math.min(shown.length, 3);
+    const cells = shown
+      .map((u, i) => {
+        const isLast = i === shown.length - 1;
+        const more =
+          isLast && proxied.length > shown.length
+            ? `<span class="img-more">+${proxied.length - shown.length}</span>`
+            : "";
+        const img = this.buildDeferredImageTag(u, { className: "lazy-img" });
+        const click = `app.openLightbox(${json}, ${i})`.replace(/"/g, "&quot;");
+        return `<div class="img-cell" onclick="${click}">${img}${more}</div>`;
+      })
+      .join("");
+    return `<div class="timeline-images cols-${cols}">${cells}</div>`;
+  },
+
+  buildAlbumCover(item) {
+    const albumId = item.id || item.album_id || "";
+    const name = this.cleanName(item.title || item.name, "未命名相册");
+    const coverRaw = item.cover || item.cover_url || "";
+    const cover =
+      coverRaw && !this.isDecorativeImage(coverRaw)
+        ? this.proxyImageUrl(coverRaw)
+        : "";
+    const img = cover ? this.buildDeferredImageTag(cover, { className: "lazy-img" }) : "";
+    const hint = item.photo_count ? `${item.photo_count} 张照片` : "点击翻看相册";
+    return `<div class="album-cover" data-album-id="${this.escapeHtml(albumId)}" data-album-name="${this.escapeHtml(name)}" onclick="app.openAlbumDetailFromEl(this)">
+      ${img}
+      <div class="album-cover-info">
+        <div>
+          <div class="album-cover-name">${this.escapeHtml(name)}</div>
+          <div class="album-cover-hint">${this.escapeHtml(hint)}</div>
+        </div>
+        <span class="album-cover-go">进入 →</span>
+      </div>
+    </div>`;
+  },
+
+  displayAuthor(item) {
+    const qq = item.author_qq || item.user_qq || "";
+    const isOwner = !qq || qq === this.qq;
+    if (isOwner) return this.cleanName(item.author_name || this.nickname, "我");
+    return this.cleanName(item.author_name, qq || "好友");
+  },
+
   detectType(item) {
-    if (item.type === "activity") return item.subtype || "activity";
     if (item.type) return item.type;
     if (item.talk_id) return "talk";
     if (item.blog_id) return "blog";
@@ -706,6 +1286,9 @@ const app = {
     );
     const discoveredGroupIds = new Set();
     const list = sourceList.filter((item) => {
+      const isHistorical = item.is_deleted || !item.is_current;
+      if (this.friendFilter === "current" && isHistorical) return false;
+      if (this.friendFilter === "historical" && !isHistorical) return false;
       const groupKey = String(item.group_id);
       discoveredGroupIds.add(groupKey);
       if (this.friendGroupFilter !== "all" && groupKey !== this.friendGroupFilter) {
@@ -737,11 +1320,14 @@ const app = {
     filterContainer.innerHTML = filterOptions
       .map((group) => `
         <button
-          class="filter-chip ${this.friendGroupFilter === group.id ? "active" : ""}"
+          class="chip ${this.friendGroupFilter === group.id ? "active" : ""}"
           onclick="app.switchFriendGroupFilter('${this.escapeHtml(group.id)}', event)"
         >${this.escapeHtml(group.name)}${group.id === "all" ? "" : ` · ${group.count}`}</button>
       `)
       .join("");
+    document
+      .querySelectorAll("#friend-status-filters .chip")
+      .forEach((el) => el.classList.toggle("active", el.dataset.friendFilter === this.friendFilter));
 
     const grouped = new Map();
     for (const group of activeGroups) {
@@ -792,22 +1378,35 @@ const app = {
   },
 
   renderFriendCard(friend) {
-    return `<article class="friend-card">
+    const isHistorical = friend.is_deleted || !friend.is_current;
+    const name = this.cleanName(friend.name || friend.remark, friend.friend_qq || "好友");
+    const remark = this.cleanName(friend.remark, "");
+    const sub = remark && remark !== name ? remark : "QQ " + (friend.friend_qq || "");
+    const badgeClass = isHistorical ? "historical" : "current";
+    const badgeText = isHistorical ? "旧联系人" : "好友";
+    const avatar = this.buildDeferredImageTag(
+      this.proxyImageUrl(
+        friend.avatar || `https://q.qlogo.cn/headimg_dl?dst_uin=${friend.friend_qq}&spec=100`,
+      ),
+      { className: "friend-avatar lazy-img" },
+    );
+
+    const chips = [];
+    if (friend.is_special_care) chips.push(`<span class="friend-chip care">★ 特别关心</span>`);
+    if (friend.interact_count > 0) chips.push(`<span class="friend-chip">互动 ${this.formatCount(friend.interact_count)}</span>`);
+    if (friend.yellow > 0) chips.push(`<span class="friend-chip">黄钻 ${friend.yellow}</span>`);
+
+    const searchKey = friend.friend_qq || name;
+    return `<article class="friend-card${isHistorical ? " historical" : ""}" onclick="app.searchInteractionsFor('${this.jsString(searchKey)}')">
       <div class="friend-card-head">
-        ${this.buildDeferredImageTag(
-          this.proxyImageUrl(friend.avatar || (`https://q.qlogo.cn/headimg_dl?dst_uin=${friend.friend_qq}&spec=100`)),
-          { className: "friend-card-avatar deferred-image" },
-        )}
-        <div class="friend-card-meta">
-          <h4>${this.escapeHtml(friend.name || friend.friend_qq)}</h4>
-          <p>${this.escapeHtml(friend.remark || friend.friend_qq)}</p>
+        ${avatar}
+        <div>
+          <div class="friend-name">${this.escapeHtml(name)}</div>
+          <div class="friend-remark">${this.escapeHtml(sub)}</div>
         </div>
-        <span class="friend-card-badge">好友</span>
+        <span class="friend-badge ${badgeClass}">${badgeText}</span>
       </div>
-      <div class="friend-card-body">
-        <span>QQ：${this.escapeHtml(friend.friend_qq || "")}</span>
-        ${friend.is_special_care ? "<span>特别关心</span>" : ""}
-      </div>
+      ${chips.length ? `<div class="friend-card-body">${chips.join("")}</div>` : ""}
     </article>`;
   },
 
@@ -818,7 +1417,7 @@ const app = {
 
   switchFriendFilter(filter, event) {
     if (event) event.preventDefault();
-    this.friendFilter = "current";
+    this.friendFilter = filter || "all";
     this.loadData();
   },
 
@@ -858,8 +1457,11 @@ const app = {
 
   showSyncProgress() {
     document.getElementById("empty-state").classList.add("hidden");
-    document.getElementById("sidebar-progress").classList.remove("hidden");
-    this.updateSyncStatus("同步中", "正在从 QQ 空间拉取并整理数据");
+    const loadingState = document.getElementById("loading-state");
+    if (loadingState) loadingState.classList.add("hidden");
+    document.getElementById("sync-progress").classList.remove("hidden");
+    this.updateSyncControls("running");
+    this.updateSyncStatus("同步中", "正在从 QQ 空间拉取并整理数据", "running");
     this.setSyncButtonState(true);
 
     this.startSyncPoll();
@@ -887,27 +1489,36 @@ const app = {
         data.total_types > 0
           ? Math.round((data.done_types / data.total_types) * 100)
           : 0;
-      document.getElementById("sidebar-progress-bar").style.width = pct + "%";
-      document.getElementById("sidebar-progress-text").textContent =
+      document.getElementById("sync-progress-bar").style.width = pct + "%";
+      document.getElementById("sync-progress-text").textContent =
         data.message ||
         `${data.current_type || "准备中"} (${data.done_types}/${data.total_types})`;
       this.applySyncStatus(data);
 
-      if (data.status === "done" || data.status === "error") {
+      if (data.status === "paused") {
         this.stopSyncPoll();
-        document.getElementById("sidebar-progress").classList.add("hidden");
+        this.setSyncButtonState(false);
+        this.updateSyncControls("paused");
+        this.loadData({ resetScroll: false });
+        return;
+      }
+
+      if (data.status === "done" || data.status === "error" || data.status === "idle") {
+        this.stopSyncPoll();
+        document.getElementById("sync-progress").classList.add("hidden");
+        this.updateSyncControls("stopped");
         this.setSyncButtonState(false);
 
         if (data.status === "error") {
-          this.updateSyncStatus("同步失败", data.error || "同步失败");
+          this.updateSyncStatus("同步失败", data.error || "同步失败", "error");
           if (this.handleAuthExpired(data.error)) return;
           alert(data.error || "同步失败");
-        } else {
-          this.updateSyncStatus("同步完成", "数据已更新，可以继续浏览当前内容");
+        } else if (data.status === "done") {
+          this.updateSyncStatus("同步完成", "数据已是最新，可以继续翻阅", "done");
         }
 
         // 刷新数据
-        this.loadData();
+        this.loadData({ resetScroll: false });
       }
     } catch {}
   },
@@ -925,6 +1536,185 @@ const app = {
   confirmSync() {
     this.closeModal("sync-modal");
     this.startSync();
+  },
+
+  // ===== 同步控制（暂停 / 继续 / 取消）=====
+  updateSyncControls(state) {
+    const box = document.getElementById("sync-controls");
+    const toggle = document.getElementById("btn-sync-toggle");
+    if (!box || !toggle) return;
+    if (state === "running") {
+      box.classList.remove("hidden");
+      toggle.textContent = "暂停";
+      toggle.dataset.action = "pause";
+    } else if (state === "paused") {
+      box.classList.remove("hidden");
+      toggle.textContent = "继续";
+      toggle.dataset.action = "resume";
+    } else {
+      box.classList.add("hidden");
+    }
+  },
+
+  toggleSyncPause() {
+    const toggle = document.getElementById("btn-sync-toggle");
+    if (toggle && toggle.dataset.action === "resume") {
+      this.resumeSync();
+    } else {
+      this.pauseSync();
+    }
+  },
+
+  async pauseSync() {
+    try {
+      await this.api("/api/v1/sync/pause", { method: "POST" });
+    } catch {}
+  },
+
+  async resumeSync() {
+    try {
+      const res = await this.api("/api/v1/sync/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qq: this.qq }),
+      });
+      if (res.code === 0) this.showSyncProgress();
+    } catch {}
+  },
+
+  async cancelSync() {
+    try {
+      await this.api("/api/v1/sync/cancel", { method: "POST" });
+    } catch {}
+    this.stopSyncPoll();
+    document.getElementById("sync-progress").classList.add("hidden");
+    this.updateSyncControls("stopped");
+    this.setSyncButtonState(false);
+    this.updateSyncStatus("待同步", "从 QQ 空间拉取并整理你的历史数据", "");
+  },
+
+  // ===== 数据与隐私 =====
+  openPrivacy() {
+    document.getElementById("privacy-modal").classList.remove("hidden");
+    this.loadStorageStats();
+  },
+
+  async loadStorageStats() {
+    try {
+      const res = await this.api(`/api/v1/storage/stats?qq=${this.qq}`);
+      if (res.code === 0 && res.data) this.renderStorageStats(res.data);
+    } catch {}
+  },
+
+  renderStorageStats(s) {
+    const setText = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
+    };
+    setText("privacy-db-path", s.db_path || "—");
+    setText("privacy-media-dir", s.media_dir || "—");
+
+    const by = s.media_by_status || {};
+    const done = by.done || 0;
+    const pending = by.pending || 0;
+    const failed = by.failed || 0;
+    const mb = ((s.media_bytes || 0) / 1048576).toFixed(1);
+    setText(
+      "privacy-media-stat",
+      `已存 ${done} · 待下载 ${pending} · 失败 ${failed} · 占用 ${mb} MB`,
+    );
+
+    const badge = document.getElementById("privacy-badge");
+    if (badge) badge.classList.toggle("hidden", !(done > 0 && pending === 0 && failed === 0));
+  },
+
+  async backfillMedia() {
+    try {
+      await this.api(`/api/v1/media/backfill?qq=${this.qq}`, { method: "POST" });
+      alert("已在后台开始下载，稍后重新打开本面板可看到进度");
+    } catch {
+      alert("操作失败");
+    }
+  },
+
+  confirmDeleteAll() {
+    if (!window.confirm("确定要彻底删除本机上这个账号的全部数据、图片与登录态吗？此操作不可恢复。")) return;
+    if (!window.confirm("再次确认：删除后需要重新扫码登录并同步。继续？")) return;
+    this.deleteAllData();
+  },
+
+  async deleteAllData() {
+    try {
+      const res = await this.api("/api/v1/data/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qq: this.qq, confirm: true }),
+      });
+      if (res.code === 0) {
+        alert("数据已彻底删除");
+        this.closeModal("privacy-modal");
+        this.logout();
+      } else {
+        alert(res.message || "删除失败");
+      }
+    } catch {
+      alert("删除失败");
+    }
+  },
+
+  // ===== 导出纪念册 =====
+  exportArchive() {
+    if (!this.qq) return;
+    // 触发浏览器下载（后端返回带 Content-Disposition 的 zip）
+    window.location.href = `/api/v1/export?qq=${encodeURIComponent(this.qq)}`;
+  },
+
+  // ===== 年度纪念卡 =====
+  openReport() {
+    document.getElementById("report-modal").classList.remove("hidden");
+    const body = document.getElementById("report-body");
+    if (body) body.innerHTML = '<p class="rail-placeholder">正在生成…</p>';
+    this.loadReport();
+  },
+
+  async loadReport() {
+    try {
+      const res = await this.api(`/api/v1/memory/report?qq=${this.qq}`);
+      if (res.code === 0 && res.data) this.renderReport(res.data);
+    } catch {}
+  },
+
+  renderReport(r) {
+    const body = document.getElementById("report-body");
+    if (!body) return;
+    const fmt = (t) => {
+      if (!t) return "—";
+      const d = new Date(t);
+      if (isNaN(d.getTime())) return "—";
+      return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
+    };
+    const labels = this.typeLabels;
+    const byType = r.by_type || {};
+    const typeRows = Object.entries(byType)
+      .filter(([, v]) => v > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([t, c]) => `<li>${this.escapeHtml(labels[t] || t)} · ${this.formatCount(c)}</li>`)
+      .join("");
+    const people = (r.top_people || [])
+      .map((p) => `<li>${this.escapeHtml(this.cleanName(p.name, p.qq))} · 互动 ${this.formatCount(p.count)}</li>`)
+      .join("");
+    const firstTalk = r.first_talk
+      ? `<p>你的第一条说说（${fmt(r.first_talk.publish_time)}）：<br/>「${this.escapeHtml((r.first_talk.content || "").slice(0, 80)) || "（无文字）"}」</p>`
+      : "";
+
+    body.innerHTML = `
+      <p>你在 QQ 空间共留下了 <strong>${this.formatCount(r.total || 0)}</strong> 条回忆，横跨 <strong>${r.span_years || 0}</strong> 年（${fmt(r.first_time)} — ${fmt(r.last_time)}）。</p>
+      <p>最活跃的是 <strong>${r.most_active_year || "—"}</strong> 年，那一年你留下了 ${this.formatCount(r.most_active_year_count || 0)} 条。</p>
+      ${people ? `<p>这些年陪你互动最多的人：</p><ul class="modal-list">${people}</ul>` : ""}
+      <p>回忆构成：</p>
+      <ul class="modal-list">${typeRows || "<li>—</li>"}</ul>
+      ${firstTalk}`;
   },
 
   isAuthExpired(message = "", code) {
@@ -981,6 +1771,13 @@ const app = {
     return `${y}-${m}-${day} ${h}:${min}`;
   },
 
+  jsString(str) {
+    return String(str || "")
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'")
+      .replace(/\n/g, " ");
+  },
+
   escapeHtml(str) {
     if (!str) return "";
     const div = document.createElement("div");
@@ -991,31 +1788,58 @@ const app = {
   proxyImageUrl(url) {
     if (!url) return "";
     if (url.includes(".qq.com") || url.includes(".qlogo.cn") || url.includes(".qpic.cn")) {
-      return "/api/v1/proxy/image?url=" + encodeURIComponent(url);
+      // 带上 qq，命中本地的资源会由后端直接返回本地文件，浏览逐步走向零外部请求
+      const qq = this.qq ? "&qq=" + encodeURIComponent(this.qq) : "";
+      return "/api/v1/proxy/image?url=" + encodeURIComponent(url) + qq;
     }
     return url;
   },
 
-  isAvatarLikeUrl(url) {
-    const value = String(url || "").trim().toLowerCase();
-    if (!value) return false;
-    return (
-      value.includes("q.qlogo.cn/headimg_dl") ||
-      value.includes("/headimg") ||
-      value.includes("qlogo") ||
-      value.includes("avatar")
-    );
+  // 过滤头像、QQ 空间装饰素材与表情贴纸，只保留真实照片
+  isDecorativeImage(url) {
+    const v = String(url || "").trim().toLowerCase();
+    if (!v) return true;
+    if (v.includes("q.qlogo.cn") || v.includes("/headimg") || v.includes("avatar")) return true;
+    if (v.includes("qzonestyle.gtimg.cn") || v.includes("/space_item/") || v.includes("custompraise")) return true;
+    if (v.includes("/emotion/") || v.includes("/qzone/em/") || v.includes("/com_attr/")) return true;
+    if (/\/qzone\/\d+\/\d+\/\d+/.test(v)) return true; // 头像缩略图路径
+    return false;
   },
 
-  updateOverviewStats(total) {
-    const el = document.getElementById("sidebar-total");
-    if (el) el.textContent = total || 0;
+  // 清理昵称中的零宽 / 不可见字符，必要时回退
+  cleanName(str, fallback = "") {
+    let out = "";
+    for (const ch of String(str || "")) {
+      const c = ch.codePointAt(0);
+      const invisible =
+        (c >= 0x200b && c <= 0x200f) ||
+        (c >= 0x2028 && c <= 0x202f) ||
+        (c >= 0x2060 && c <= 0x2064) ||
+        c === 0xfeff;
+      if (!invisible) out += ch;
+    }
+    out = out.trim();
+    return out || fallback;
   },
 
-  updateSyncStatus(label, hint) {
-    const syncEl = document.getElementById("sidebar-sync");
-    const hintEl = document.getElementById("sidebar-sync-hint");
-    if (syncEl) syncEl.textContent = label;
+  // 大数缩写：1.2w / 3.4k
+  formatCount(value) {
+    const num = Number(value) || 0;
+    if (num >= 10000) return (num / 10000).toFixed(num % 10000 === 0 ? 0 : 1) + "w";
+    if (num >= 1000) return (num / 1000).toFixed(num % 1000 === 0 ? 0 : 1) + "k";
+    return String(num);
+  },
+
+  updateSyncStatus(label, hint, state) {
+    const stateEl = document.getElementById("sync-state");
+    const hintEl = document.getElementById("sync-hint");
+    if (stateEl) {
+      stateEl.textContent = label;
+      stateEl.classList.remove("is-running", "is-done", "is-error");
+      if (state === "running") stateEl.classList.add("is-running");
+      else if (state === "done") stateEl.classList.add("is-done");
+      else if (state === "error") stateEl.classList.add("is-error");
+    }
     if (hintEl) hintEl.textContent = hint || "";
   },
 
@@ -1023,30 +1847,31 @@ const app = {
     const status = data.status || "idle";
     switch (status) {
       case "running":
-        this.updateSyncStatus(
-          "同步中",
-          data.message || "正在从 QQ 空间拉取并整理数据",
-        );
+        this.updateSyncStatus("同步中", data.message || "正在从 QQ 空间拉取并整理数据", "running");
         break;
       case "done":
-        this.updateSyncStatus(
-          "同步完成",
-          data.message || "数据已同步完成，可以继续浏览当前内容",
-        );
+        this.updateSyncStatus("同步完成", data.message || "数据已是最新，可以继续翻阅", "done");
         break;
       case "error":
-        this.updateSyncStatus(
-          "同步失败",
-          data.error || data.message || "最近一次同步执行失败",
-        );
+        this.updateSyncStatus("同步失败", data.error || data.message || "最近一次同步执行失败", "error");
+        break;
+      case "paused":
+        this.updateSyncStatus("已暂停", data.message || "同步已暂停，可继续", "running");
         break;
       case "idle":
       default:
-        this.updateSyncStatus(
-          "未开始",
-          "当前没有进行中的同步任务，可按需发起同步",
-        );
+        this.updateSyncStatus("待同步", "从 QQ 空间拉取并整理你的历史数据", "");
         break;
+    }
+  },
+
+  updateUnifiedSearchField() {
+    const input = document.getElementById("memory-search");
+    if (!input) return;
+
+    input.placeholder = "搜索说说、留言、好友昵称或 QQ…";
+    if (document.activeElement !== input) {
+      input.value = this.currentView === "interactions" ? this.interactionKeyword || "" : this.searchKeyword || "";
     }
   },
 
@@ -1056,13 +1881,23 @@ const app = {
     document.getElementById("content-title").textContent = meta.title;
     document.getElementById("content-description").textContent =
       meta.description;
+    if (this.currentView === "memories" && this.searchKeyword) {
+      document.getElementById("content-kicker").textContent = "搜索";
+      document.getElementById("content-title").textContent = `搜索 “${this.searchKeyword}”`;
+      document.getElementById("content-description").textContent = "在全部回忆中按关键词检索";
+    }
+    if (this.currentView === "interactions" && this.interactionKeyword) {
+      document.getElementById("content-kicker").textContent = "好友互动";
+      document.getElementById("content-title").textContent = `与 “${this.interactionKeyword}” 的互动`;
+      document.getElementById("content-description").textContent = "点赞、评论、留言、访客与内容提及会按时间汇总在这里";
+    }
   },
 
   formatTimelineGroup(timeStr) {
-    if (!timeStr) return "更早以前";
+    if (!timeStr) return "earlier";
     const d = new Date(timeStr);
-    if (isNaN(d.getTime())) return "更早以前";
-    return `${d.getFullYear()} 年 ${String(d.getMonth() + 1).padStart(2, "0")} 月`;
+    if (isNaN(d.getTime())) return "earlier";
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   },
 
   updateEmptyState() {
@@ -1070,6 +1905,14 @@ const app = {
     document.getElementById("empty-title").textContent = meta.emptyTitle;
     document.getElementById("empty-description").textContent =
       meta.emptyDescription;
+    if (this.currentView === "memories" && this.searchKeyword) {
+      document.getElementById("empty-title").textContent = "没有匹配的回忆";
+      document.getElementById("empty-description").textContent = "换个关键词再试试";
+    }
+    if (this.currentView === "interactions") {
+      document.getElementById("empty-title").textContent = this.interactionKeyword ? "没有找到互动" : "先输入一个好友";
+      document.getElementById("empty-description").textContent = this.interactionKeyword ? "换个昵称或 QQ 号再试试" : "在右上角搜索框输入昵称或 QQ，查看你和 TA 的所有往来";
+    }
   },
 
   // ===== 相册详情 =====
@@ -1089,6 +1932,11 @@ const app = {
     document.getElementById("album-load-more").classList.add("hidden");
 
     await this.fetchAlbumPhotos();
+  },
+
+  openAlbumDetailFromEl(el) {
+    if (!el) return;
+    this.openAlbumDetail(el.dataset.albumId || "", el.dataset.albumName || "相册");
   },
 
   closeAlbumDetail() {
@@ -1128,22 +1976,19 @@ const app = {
   renderAlbumPhotos(photos) {
     const container = document.getElementById("album-photos");
     photos.forEach((photo) => {
-      const url = photo.url || photo.origin_url || "";
-      if (!url) return;
-      const proxied = this.proxyImageUrl(url);
+      const full = photo.url || photo.origin_url || "";
+      if (!full) return;
+      const fullProxied = this.proxyImageUrl(full);
+      const thumbProxied = this.proxyImageUrl(photo.thumb_url || full);
+      const desc = this.cleanName(photo.description || photo.desc, "");
+      const img = this.buildDeferredImageTag(thumbProxied, { className: "lazy-img" });
       const item = document.createElement("div");
       item.className = "photo-item";
-      item.innerHTML = this.buildDeferredImageTag(proxied, {
-        className: "deferred-image",
-        dataAttrs: {
-          "album-photo": "true",
-          fullsrc: proxied,
-        },
-        onclick: "app.openAlbumLightbox(this)",
-      });
-      if (photo.desc) {
-        item.innerHTML += `<div class="photo-desc">${this.escapeHtml(photo.desc)}</div>`;
-      }
+      item.innerHTML = `
+        <div class="photo-frame" data-album-photo data-fullsrc="${this.escapeHtml(fullProxied)}" onclick="app.openAlbumLightbox(this)">
+          ${img}
+        </div>
+        ${desc ? `<div class="photo-desc">${this.escapeHtml(desc)}</div>` : ""}`;
       container.appendChild(item);
     });
     this.observeDeferredImages(container);
@@ -1207,7 +2052,7 @@ const app = {
     const syncConfirmButton = document.getElementById("btn-sync-confirm");
     if (syncButton) {
       syncButton.disabled = loading;
-      syncButton.textContent = loading ? "同步中" : "同步数据";
+      syncButton.textContent = loading ? "同步中…" : "同步档案";
     }
     if (syncConfirmButton) {
       syncConfirmButton.disabled = loading;
@@ -1230,7 +2075,7 @@ const app = {
       .map(([key, value]) => ` data-${key}="${this.escapeHtml(String(value))}"`)
       .join("");
 
-    return `<img src="${this.imagePlaceholder}" data-src="${safeSrc}" loading="lazy" decoding="async"${className}${alt}${onclick}${dataAttrs}>`;
+    return `<img src="${this.imagePlaceholder}" data-src="${safeSrc}" loading="lazy" decoding="async" onerror="this.removeAttribute('src');this.classList.add('is-failed','is-loaded')"${className}${alt}${onclick}${dataAttrs}>`;
   },
 
   ensureDeferredImageObserver() {
@@ -1283,7 +2128,7 @@ const app = {
     }
     const target = document.getElementById("load-more");
     const root = document.getElementById("content-scroll");
-    if (!target || this.currentView !== "memories") return;
+    if (!target || !["memories", "interactions"].includes(this.currentView)) return;
     this.infiniteObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (entry.isIntersecting && !this.loading && !target.classList.contains("hidden")) {

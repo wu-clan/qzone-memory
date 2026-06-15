@@ -16,6 +16,7 @@ type VideoItem struct {
 	Width        int
 	Height       int
 	Duration     int
+	PlayCount    int
 	CommentCount int
 	UploadTime   time.Time
 }
@@ -69,6 +70,7 @@ func (c *Client) GetVideos(offset, limit int) ([]VideoItem, error) {
 			Width:        getIntValue(vMap, "width"),
 			Height:       getIntValue(vMap, "height"),
 			Duration:     getIntValue(vMap, "duration"),
+			PlayCount:    firstPositiveInt(getIntValue(vMap, "playnum"), getIntValue(vMap, "playCount"), getIntValue(vMap, "play_count")),
 			CommentCount: getIntValue(vMap, "cmtnum"),
 		}
 		if ts := getInt64Value(vMap, "uploadtime"); ts > 0 {

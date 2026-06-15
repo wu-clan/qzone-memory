@@ -7,13 +7,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/qzone-memory/internal/media"
 )
 
 var proxyClient = &http.Client{
 	Timeout: 15 * time.Second,
 }
 
-// ProxyImage 代理 QQ 空间图片请求，解决浏览器无法直接访问 CDN 的问题
+// ProxyImage 媒体解析器：命中本地则直接返回本地文件，否则实时回源并登记后台下载，
+// 使图片在首次浏览后逐步本地化，最终达到「浏览零外部请求」。
 func ProxyImage(c *gin.Context) {
 	imageURL := c.Query("url")
 	if imageURL == "" {
@@ -27,6 +29,19 @@ func ProxyImage(c *gin.Context) {
 		return
 	}
 
+	// 命中本地：直接返回本地文件（http.ServeFile 自动处理 Content-Type 与 Range）
+	qq := c.Query("qq")
+	if qq != "" {
+		if local, ok := media.Resolve(c.Request.Context(), qq, imageURL); ok {
+			c.Header("Cache-Control", "public, max-age=31536000")
+			c.File(local)
+			return
+		}
+		// 未命中：登记并后台下载，下次浏览即走本地
+		media.EnqueueAndDownload(qq, imageURL, "ondemand")
+	}
+
+	// 回源（降级路径，确保任何阶段都不比从前更糟）
 	req, err := http.NewRequest("GET", imageURL, nil)
 	if err != nil {
 		c.Status(http.StatusBadGateway)

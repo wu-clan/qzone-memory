@@ -56,18 +56,26 @@ func RegisterRoutes(mode string) *gin.Engine {
 
 	// 同步接口
 	apiV1.POST("/sync/start", v1.StartSync)         // 开始同步数据
+	apiV1.POST("/sync/resume", v1.ResumeSync)       // 断点续传
+	apiV1.POST("/sync/pause", v1.PauseSync)         // 暂停同步
+	apiV1.POST("/sync/cancel", v1.CancelSync)       // 取消同步
 	apiV1.GET("/sync/progress", v1.GetSyncProgress) // 获取同步进度
 
 	// 历史动态归档
-	apiV1.GET("/activities", v1.GetActivityList)          // 获取历史动态归档
-	apiV1.GET("/activities/detail", v1.GetActivityDetail) // 获取历史动态详情
-	apiV1.GET("/memory/timeline", v1.GetMemoryTimeline)   // 获取统一回忆时间线
-	apiV1.GET("/memory/stats", v1.GetMemoryStats)         // 获取回忆统计
-	apiV1.GET("/friends", v1.GetFriendList)               // 获取好友与历史联系人
-	apiV1.GET("/visitors", v1.GetVisitorList)             // 获取访客记录
-	apiV1.GET("/videos", v1.GetVideoList)                 // 获取视频列表
-	apiV1.GET("/favorites", v1.GetFavoriteList)           // 获取收藏列表
-	apiV1.GET("/diaries", v1.GetDiaryList)                // 获取私密日记
+	apiV1.GET("/activities", v1.GetActivityList)                     // 获取历史动态归档
+	apiV1.GET("/activities/detail", v1.GetActivityDetail)            // 获取历史动态详情
+	apiV1.GET("/memory/timeline", v1.GetMemoryTimeline)              // 获取统一回忆时间线
+	apiV1.GET("/memory/stats", v1.GetMemoryStats)                    // 获取回忆统计
+	apiV1.GET("/memory/on-this-day", v1.GetOnThisDay)                // 那年今日（同月同日）
+	apiV1.GET("/memory/search", v1.SearchMemory)                     // 全文搜索
+	apiV1.GET("/memory/interactions", v1.SearchFriendInteractions)   // 按好友/QQ 查询互动
+	apiV1.GET("/memory/item/interactions", v1.GetMemoryInteractions) // 获取单条回忆下的完整互动
+	apiV1.GET("/memory/report", v1.GetMemoryReport)                  // 年度纪念卡
+	apiV1.GET("/friends", v1.GetFriendList)                          // 获取好友与历史联系人
+	apiV1.GET("/visitors", v1.GetVisitorList)                        // 获取访客记录
+	apiV1.GET("/videos", v1.GetVideoList)                            // 获取视频列表
+	apiV1.GET("/favorites", v1.GetFavoriteList)                      // 获取收藏列表
+	apiV1.GET("/diaries", v1.GetDiaryList)                           // 获取私密日记
 
 	// 说说和日志
 	apiV1.GET("/talks", v1.GetTalkList)          // 获取说说列表
@@ -88,8 +96,15 @@ func RegisterRoutes(mode string) *gin.Engine {
 	apiV1.GET("/shares", v1.ListSharesByTarget)     // 获取转发列表
 	apiV1.GET("/mentions", v1.GetMentionList)       // 获取提及列表
 
-	// 图片代理
-	apiV1.GET("/proxy/image", v1.ProxyImage) // 代理 QQ 空间图片
+	// 图片代理（命中本地走本地，未命中回源并后台下载）
+	apiV1.GET("/proxy/image", v1.ProxyImage)
+
+	// 数据与隐私
+	apiV1.GET("/storage/stats", v1.GetStorageStats)       // 数据位置与媒体本地化统计
+	apiV1.POST("/media/backfill", v1.BackfillMedia)       // 媒体回填 / 重新下载失败项
+	apiV1.POST("/data/delete", v1.DeleteData)             // 彻底删除我的数据
+	apiV1.POST("/data/reprocess", v1.ReprocessActivities) // 重解析动态（剥离"别人赞我"、恢复真实说说）
+	apiV1.GET("/export", v1.ExportArchive)                // 导出离线纪念册（zip）
 
 	return router
 }

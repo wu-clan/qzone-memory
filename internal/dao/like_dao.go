@@ -26,6 +26,6 @@ func BatchUpsertLikes(likes []*model.Like) error {
 	}
 	return database.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "like_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"liker_qq", "liker_name", "liker_avatar", "like_time", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"target_type", "target_id", "liker_qq", "liker_name", "liker_avatar", "like_time", "updated_at"}),
 	}).Create(&likes).Error
 }

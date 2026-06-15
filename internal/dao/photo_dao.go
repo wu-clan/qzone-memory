@@ -59,7 +59,7 @@ func BatchUpsertPhotos(photos []*model.Photo) error {
 	}
 	return database.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "photo_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"user_qq", "album_id", "name", "description", "url", "thumb_url", "width", "height", "is_deleted", "photo_time", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"user_qq", "album_id", "name", "description", "url", "thumb_url", "owner_qq", "owner_name", "width", "height", "is_deleted", "photo_time", "updated_at"}),
 	}).Create(&photos).Error
 }
 

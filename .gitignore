@@ -7,6 +7,7 @@ Thumbs.db
 
 /qzone-memory
 /server
+/dist/
 *.exe
 *.test
 *.out
@@ -22,3 +23,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+/docs
+/web/design-demos

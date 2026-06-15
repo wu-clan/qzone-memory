@@ -19,6 +19,7 @@ import (
 	"github.com/qzone-memory/internal/common"
 	"github.com/qzone-memory/internal/dao"
 	"github.com/qzone-memory/internal/dto"
+	"github.com/qzone-memory/internal/media"
 	"github.com/qzone-memory/internal/model"
 	"github.com/qzone-memory/pkg/logger"
 	"go.uber.org/zap"
@@ -26,6 +27,7 @@ import (
 
 type SyncProgress struct {
 	Status      string    `json:"status"`
+	RunID       string    `json:"run_id,omitempty"`
 	CurrentType string    `json:"current_type"`
 	TotalTypes  int       `json:"total_types"`
 	DoneTypes   int       `json:"done_types"`
@@ -36,8 +38,10 @@ type SyncProgress struct {
 }
 
 var (
-	syncProgress = &SyncProgress{Status: "idle"}
-	syncMu       sync.RWMutex
+	syncProgress   = &SyncProgress{Status: "idle"}
+	syncMu         sync.RWMutex
+	syncCancel     context.CancelFunc
+	syncStopReason string // 被暂停/取消时由 runSync 读取："paused" / "canceled"
 )
 
 func StartSync(ctx context.Context, req dto.SyncRequest) (map[string]string, error) {
@@ -55,13 +59,40 @@ func StartSync(ctx context.Context, req dto.SyncRequest) (map[string]string, err
 		syncMu.Unlock()
 		return nil, common.ErrUnauthorized
 	}
-	syncProgress = &SyncProgress{Status: "running", StartedAt: time.Now()}
+	runID := newSyncRunID(req.QQ)
+	syncProgress = &SyncProgress{Status: "running", RunID: runID, StartedAt: time.Now()}
+	runCtx, cancel := context.WithCancel(context.Background())
+	syncCancel = cancel
+	syncStopReason = ""
 	syncMu.Unlock()
 
 	client := qzone.NewClient(user.Cookie, user.QQ)
-	go runSync(client, req.QQ)
+	go runSync(runCtx, client, req.QQ, req.Resume, runID)
 
-	return map[string]string{"message": "同步任务已启动"}, nil
+	return map[string]string{"message": "同步任务已启动", "run_id": runID}, nil
+}
+
+// PauseSync 暂停当前同步：停止后续步骤，保留已抓数据与各类型进度，之后可继续。
+func PauseSync() (map[string]string, error) {
+	return stopSync("paused", "同步已暂停，可继续")
+}
+
+// CancelSync 取消当前同步：停止后续步骤，保留已抓数据。
+func CancelSync() (map[string]string, error) {
+	return stopSync("canceled", "同步已取消")
+}
+
+func stopSync(reason, message string) (map[string]string, error) {
+	syncMu.Lock()
+	defer syncMu.Unlock()
+	if syncProgress.Status != "running" {
+		return map[string]string{"message": "当前没有进行中的同步"}, nil
+	}
+	syncStopReason = reason
+	if syncCancel != nil {
+		syncCancel()
+	}
+	return map[string]string{"message": message}, nil
 }
 
 func GetSyncProgress() (*SyncProgress, error) {
@@ -78,7 +109,132 @@ func updateSyncProgress(currentType, message string, doneTypes int) {
 	syncProgress.DoneTypes = doneTypes
 }
 
-func runSync(client *qzone.Client, qq string) {
+func currentSyncStopReason() string {
+	syncMu.RLock()
+	defer syncMu.RUnlock()
+	return syncStopReason
+}
+
+type syncLogFields struct {
+	Page         int
+	Offset       int
+	Limit        int
+	ItemsFetched int
+	ItemsSaved   int
+	Duration     time.Duration
+	Err          error
+	Context      map[string]any
+}
+
+func newSyncRunID(qq string) string {
+	now := time.Now()
+	return fmt.Sprintf("sync_%s_%s_%06d", qq, now.Format("20060102150405"), rand.Intn(1000000))
+}
+
+func writeSyncLog(runID, qq, level, stage, event, message string, fields syncLogFields) {
+	if runID == "" || qq == "" {
+		return
+	}
+	if level == "" {
+		level = "info"
+	}
+
+	item := &model.SyncLog{
+		RunID:        runID,
+		UserQQ:       qq,
+		Level:        level,
+		Stage:        stage,
+		Event:        event,
+		Message:      message,
+		Page:         fields.Page,
+		Offset:       fields.Offset,
+		Limit:        fields.Limit,
+		ItemsFetched: fields.ItemsFetched,
+		ItemsSaved:   fields.ItemsSaved,
+		DurationMS:   fields.Duration.Milliseconds(),
+	}
+	if fields.Err != nil {
+		item.Error = fields.Err.Error()
+	}
+	if len(fields.Context) > 0 {
+		if data, err := json.Marshal(fields.Context); err == nil {
+			item.ContextJSON = string(data)
+		}
+	}
+	if err := dao.CreateSyncLog(context.Background(), item); err != nil {
+		logger.Warn("写入同步日志失败", zap.String("run_id", runID), zap.String("event", event), zap.Error(err))
+	}
+}
+
+func checkSyncCanceled(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
+
+func pageNumber(offset, limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+	return offset/limit + 1
+}
+
+func logPageFetchStart(runID, qq, stage string, offset, limit int) time.Time {
+	started := time.Now()
+	writeSyncLog(runID, qq, "info", stage, "page_fetch_start", "开始拉取分页数据", syncLogFields{
+		Page:   pageNumber(offset, limit),
+		Offset: offset,
+		Limit:  limit,
+	})
+	return started
+}
+
+func logPageFetchDone(runID, qq, stage string, offset, limit, fetched int, started time.Time) {
+	writeSyncLog(runID, qq, "info", stage, "page_fetch_done", "分页数据拉取完成", syncLogFields{
+		Page:         pageNumber(offset, limit),
+		Offset:       offset,
+		Limit:        limit,
+		ItemsFetched: fetched,
+		Duration:     time.Since(started),
+	})
+}
+
+func logPageSaveDone(runID, qq, stage string, offset, limit, fetched, saved int, started time.Time) {
+	writeSyncLog(runID, qq, "info", stage, "page_save_done", "分页数据保存完成", syncLogFields{
+		Page:         pageNumber(offset, limit),
+		Offset:       offset,
+		Limit:        limit,
+		ItemsFetched: fetched,
+		ItemsSaved:   saved,
+		Duration:     time.Since(started),
+	})
+}
+
+func logPageNoMore(runID, qq, stage string, offset, limit int) {
+	writeSyncLog(runID, qq, "info", stage, "page_no_more", "分页数据已拉取完毕", syncLogFields{
+		Page:   pageNumber(offset, limit),
+		Offset: offset,
+		Limit:  limit,
+	})
+}
+
+func logPageError(runID, qq, stage string, offset, limit int, err error, started time.Time) {
+	writeSyncLog(runID, qq, "error", stage, "page_error", "分页数据处理失败", syncLogFields{
+		Page:     pageNumber(offset, limit),
+		Offset:   offset,
+		Limit:    limit,
+		Duration: time.Since(started),
+		Err:      err,
+	})
+}
+
+func runSync(ctx context.Context, client *qzone.Client, qq string, resume bool, runID string) {
+	runStarted := time.Now()
+	writeSyncLog(runID, qq, "info", "", "run_start", "同步任务开始", syncLogFields{
+		Context: map[string]any{"resume": resume},
+	})
+
 	defer func() {
 		if r := recover(); r != nil {
 			syncMu.Lock()
@@ -86,10 +242,14 @@ func runSync(client *qzone.Client, qq string) {
 			syncProgress.Error = fmt.Sprintf("同步异常: %v", r)
 			syncProgress.FinishedAt = time.Now()
 			syncMu.Unlock()
+			writeSyncLog(runID, qq, "error", "", "run_error", "同步异常终止", syncLogFields{
+				Duration: time.Since(runStarted),
+				Context:  map[string]any{"panic": fmt.Sprintf("%v", r)},
+			})
 		}
 	}()
 
-	// 同步前检测 Cookie 有效性
+	writeSyncLog(runID, qq, "info", "登录态", "cookie_check_start", "开始验证 Cookie", syncLogFields{})
 	if err := client.CheckCookie(); err != nil {
 		syncMu.Lock()
 		syncProgress.Status = "error"
@@ -97,12 +257,21 @@ func runSync(client *qzone.Client, qq string) {
 		syncProgress.FinishedAt = time.Now()
 		syncMu.Unlock()
 		logger.Error("Cookie 验证失败，终止同步", zap.String("qq", qq), zap.Error(err))
+		writeSyncLog(runID, qq, "error", "登录态", "cookie_check_error", "Cookie 验证失败，终止同步", syncLogFields{
+			Duration: time.Since(runStarted),
+			Err:      err,
+		})
+		writeSyncLog(runID, qq, "error", "", "run_error", "同步任务失败", syncLogFields{
+			Duration: time.Since(runStarted),
+			Err:      err,
+		})
 		return
 	}
+	writeSyncLog(runID, qq, "info", "登录态", "cookie_check_done", "Cookie 验证通过", syncLogFields{})
 
 	syncSteps := []struct {
 		name string
-		fn   func(*qzone.Client, string) (int, error)
+		fn   func(context.Context, *qzone.Client, string, string) (int, error)
 	}{
 		{"动态归档", syncActivities},
 		{"好友", syncFriends},
@@ -119,16 +288,60 @@ func runSync(client *qzone.Client, qq string) {
 		{"转发", syncShares},
 	}
 	syncMu.Lock()
-	syncProgress.TotalTypes = len(syncSteps)
+	syncProgress.TotalTypes = len(syncSteps) + 1 // +1 为媒体下载阶段
 	syncMu.Unlock()
+	writeSyncLog(runID, qq, "info", "", "run_plan", "同步计划已生成", syncLogFields{
+		Context: map[string]any{"total_stages": len(syncSteps) + 1},
+	})
+
+	bg := context.Background() // 状态持久化不随同步取消而中断
 	failedSteps := make([]string, 0)
 	for i, step := range syncSteps {
+		if ctx.Err() != nil {
+			finishStopped(qq, runID)
+			return
+		}
+		if resume {
+			if st, err := dao.GetSyncState(bg, qq, step.name); err == nil && st.Status == "done" {
+				logger.Info("断点续传：跳过已完成类型", zap.String("type", step.name))
+				writeSyncLog(runID, qq, "info", step.name, "stage_skip", "断点续传跳过已完成类型", syncLogFields{
+					Context: map[string]any{"items_synced": st.ItemsSynced},
+				})
+				continue
+			}
+		}
+
 		updateSyncProgress(step.name, fmt.Sprintf("正在同步%s...", step.name), i)
-		count, err := step.fn(client, qq)
+		_ = dao.UpsertSyncState(bg, &model.SyncState{UserQQ: qq, Type: step.name, Status: "running"})
+		stageStarted := time.Now()
+		writeSyncLog(runID, qq, "info", step.name, "stage_start", "同步阶段开始", syncLogFields{})
+
+		count, err := step.fn(ctx, client, qq, runID)
 		if err != nil {
+			if ctx.Err() != nil {
+				reason := currentSyncStopReason()
+				stateStatus := "canceled"
+				if reason == "paused" {
+					stateStatus = "paused"
+				}
+				_ = dao.UpsertSyncState(bg, &model.SyncState{UserQQ: qq, Type: step.name, Status: stateStatus, ItemsSynced: count, LastSyncedAt: time.Now(), Error: err.Error()})
+				writeSyncLog(runID, qq, "info", step.name, "stage_stopped", "同步阶段被暂停或取消", syncLogFields{
+					ItemsSaved: count,
+					Duration:   time.Since(stageStarted),
+					Err:        err,
+					Context:    map[string]any{"reason": reason},
+				})
+				finishStopped(qq, runID)
+				return
+			}
 			logger.Error("同步失败", zap.String("type", step.name), zap.Error(err))
 			failedSteps = append(failedSteps, fmt.Sprintf("%s: %v", step.name, err))
-			// Cookie 过期时立即终止，不再尝试后续步骤
+			_ = dao.UpsertSyncState(bg, &model.SyncState{UserQQ: qq, Type: step.name, Status: "failed", Error: err.Error()})
+			writeSyncLog(runID, qq, "error", step.name, "stage_error", "同步阶段失败", syncLogFields{
+				ItemsSaved: count,
+				Duration:   time.Since(stageStarted),
+				Err:        err,
+			})
 			if errors.Is(err, qzone.ErrCookieExpired) {
 				syncMu.Lock()
 				syncProgress.Status = "error"
@@ -136,19 +349,67 @@ func runSync(client *qzone.Client, qq string) {
 				syncProgress.FinishedAt = time.Now()
 				syncMu.Unlock()
 				logger.Error("Cookie 过期，终止同步", zap.String("qq", qq))
+				writeSyncLog(runID, qq, "error", "", "run_error", "Cookie 已过期，终止同步", syncLogFields{
+					Duration: time.Since(runStarted),
+					Err:      err,
+				})
 				return
 			}
 		} else {
 			logger.Info("同步步骤完成", zap.String("type", step.name), zap.Int("count", count))
+			_ = dao.UpsertSyncState(bg, &model.SyncState{UserQQ: qq, Type: step.name, Status: "done", ItemsSynced: count, LastSyncedAt: time.Now()})
+			writeSyncLog(runID, qq, "info", step.name, "stage_done", "同步阶段完成", syncLogFields{
+				ItemsFetched: count,
+				ItemsSaved:   count,
+				Duration:     time.Since(stageStarted),
+			})
 			if count == 0 {
 				logger.Warn("同步步骤返回空数据", zap.String("type", step.name), zap.String("qq", qq))
+				writeSyncLog(runID, qq, "warn", step.name, "stage_empty", "同步阶段返回空数据", syncLogFields{})
 			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+
+	if ctx.Err() == nil {
+		updateSyncProgress("媒体下载", "正在把图片下载到本地...", len(syncSteps))
+		_ = dao.UpsertSyncState(bg, &model.SyncState{UserQQ: qq, Type: "媒体下载", Status: "running"})
+		mediaStarted := time.Now()
+		writeSyncLog(runID, qq, "info", "媒体下载", "stage_start", "媒体下载阶段开始", syncLogFields{})
+		enqueued, err := media.EnqueueAll(ctx, qq)
+		if err != nil {
+			logger.Warn("登记媒体失败", zap.String("qq", qq), zap.Error(err))
+			writeSyncLog(runID, qq, "warn", "媒体下载", "media_enqueue_error", "登记媒体失败", syncLogFields{Err: err})
+		} else {
+			writeSyncLog(runID, qq, "info", "媒体下载", "media_enqueue_done", "媒体登记完成", syncLogFields{ItemsFetched: enqueued, ItemsSaved: enqueued})
+		}
+		mediaDone, mediaFailed, mediaErr := media.DrainPending(ctx, qq)
+		if mediaErr != nil {
+			writeSyncLog(runID, qq, "warn", "媒体下载", "media_download_error", "媒体下载阶段被中断或失败", syncLogFields{
+				ItemsSaved: mediaDone,
+				Duration:   time.Since(mediaStarted),
+				Err:        mediaErr,
+				Context:    map[string]any{"failed": mediaFailed},
+			})
+		}
+		logger.Info("媒体下载阶段完成", zap.String("qq", qq), zap.Int("done", mediaDone), zap.Int("failed", mediaFailed))
+		_ = dao.UpsertSyncState(bg, &model.SyncState{UserQQ: qq, Type: "媒体下载", Status: "done", ItemsSynced: mediaDone, LastSyncedAt: time.Now()})
+		writeSyncLog(runID, qq, "info", "媒体下载", "stage_done", "媒体下载阶段完成", syncLogFields{
+			ItemsFetched: mediaDone + mediaFailed,
+			ItemsSaved:   mediaDone,
+			Duration:     time.Since(mediaStarted),
+			Context:      map[string]any{"failed": mediaFailed},
+		})
+	}
+
+	if ctx.Err() != nil {
+		finishStopped(qq, runID)
+		return
+	}
+
 	syncMu.Lock()
 	syncProgress.CurrentType = ""
-	syncProgress.DoneTypes = len(syncSteps)
+	syncProgress.DoneTypes = len(syncSteps) + 1
 	syncProgress.FinishedAt = time.Now()
 	if len(failedSteps) > 0 {
 		syncProgress.Status = "error"
@@ -162,16 +423,55 @@ func runSync(client *qzone.Client, qq string) {
 	syncMu.Unlock()
 	if len(failedSteps) > 0 {
 		logger.Warn("数据同步部分失败", zap.String("qq", qq), zap.Strings("failed_steps", failedSteps))
+		writeSyncLog(runID, qq, "warn", "", "run_done", "同步结束，但部分项目失败", syncLogFields{
+			Duration: time.Since(runStarted),
+			Context:  map[string]any{"failed_steps": failedSteps},
+		})
 		return
 	}
 	logger.Info("数据同步完成", zap.String("qq", qq))
+	writeSyncLog(runID, qq, "info", "", "run_done", "同步任务完成", syncLogFields{
+		Duration: time.Since(runStarted),
+	})
 }
 
-func syncFriends(client *qzone.Client, qq string) (int, error) {
-	friendItems, groupItems, err := client.GetFriends()
-	if err != nil {
+// finishStopped 把进度标记为暂停或取消，保留已抓数据
+func finishStopped(qq, runID string) {
+	syncMu.Lock()
+	syncProgress.CurrentType = ""
+	syncProgress.FinishedAt = time.Now()
+	reason := syncStopReason
+	message := "同步已取消"
+	if syncStopReason == "paused" {
+		syncProgress.Status = "paused"
+		syncProgress.Message = "同步已暂停，可继续"
+		message = syncProgress.Message
+	} else {
+		syncProgress.Status = "idle"
+		syncProgress.Message = "同步已取消"
+	}
+	syncMu.Unlock()
+	logger.Info("同步已停止", zap.String("qq", qq), zap.String("reason", reason))
+	event := "run_canceled"
+	if reason == "paused" {
+		event = "run_paused"
+	}
+	writeSyncLog(runID, qq, "info", "", event, message, syncLogFields{
+		Context: map[string]any{"reason": reason},
+	})
+}
+
+func syncFriends(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
+	if err := checkSyncCanceled(ctx); err != nil {
 		return 0, err
 	}
+	fetchStarted := logPageFetchStart(runID, qq, "好友", 0, 0)
+	friendItems, groupItems, err := client.GetFriends()
+	if err != nil {
+		logPageError(runID, qq, "好友", 0, 0, err, fetchStarted)
+		return 0, err
+	}
+	logPageFetchDone(runID, qq, "好友", 0, 0, len(friendItems)+len(groupItems), fetchStarted)
 
 	groups := make([]*model.FriendGroup, 0, len(groupItems)+1)
 	groupIDs := make([]int, 0, len(groupItems)+1)
@@ -190,19 +490,22 @@ func syncFriends(client *qzone.Client, qq string) (int, error) {
 	})
 	groupIDs = append(groupIDs, -1)
 	if err := dao.BatchUpsertFriendGroups(groups); err != nil {
+		logPageError(runID, qq, "好友", 0, 0, err, fetchStarted)
 		return 0, err
 	}
 	if err := dao.MarkMissingGroupsDeleted(qq, groupIDs); err != nil {
+		logPageError(runID, qq, "好友", 0, 0, err, fetchStarted)
 		return 0, err
 	}
 
 	specialCareList, err := client.GetSpecialCareFriends()
 	if err != nil {
 		logger.Warn("获取特别关心失败", zap.String("qq", qq), zap.Error(err))
+		writeSyncLog(runID, qq, "warn", "好友", "special_care_error", "获取特别关心失败", syncLogFields{Err: err})
 	}
-	specialCareMap := make(map[string]struct{}, len(specialCareList))
+	specialCareMap := make(map[string]string, len(specialCareList))
 	for _, item := range specialCareList {
-		specialCareMap[item.FriendQQ] = struct{}{}
+		specialCareMap[item.FriendQQ] = item.Name
 	}
 
 	friends := make([]*model.Friend, 0, len(friendItems))
@@ -223,14 +526,16 @@ func syncFriends(client *qzone.Client, qq string) (int, error) {
 			Yellow:     item.Yellow,
 			LastSeenAt: time.Now(),
 		}
-		if _, ok := specialCareMap[item.FriendQQ]; ok {
+		if specialCareName, ok := specialCareMap[item.FriendQQ]; ok {
 			friend.IsSpecialCare = true
+			friend.SpecialCareName = specialCareName
 		}
 		if idx < 20 {
 			addTime, commonGroup, friendshipErr := client.GetFriendship(item.FriendQQ)
 			if friendshipErr == nil {
 				friend.AddTime = addTime
 				friend.CommonGroup = commonGroup
+				friend.FriendshipFetchedAt = time.Now()
 			}
 		}
 		friends = append(friends, friend)
@@ -238,24 +543,34 @@ func syncFriends(client *qzone.Client, qq string) (int, error) {
 	}
 
 	if err := dao.BatchUpsertFriends(friends); err != nil {
+		logPageError(runID, qq, "好友", 0, 0, err, fetchStarted)
 		return 0, err
 	}
 	if err := dao.MarkCurrentFriendsDeleted(qq, currentQQs); err != nil {
+		logPageError(runID, qq, "好友", 0, 0, err, fetchStarted)
 		return 0, err
 	}
+	logPageSaveDone(runID, qq, "好友", 0, 0, len(friendItems)+len(groupItems), len(friends)+len(groups), fetchStarted)
 
 	if err := inferHistoricalFriends(qq); err != nil {
 		logger.Warn("推断历史好友失败", zap.String("qq", qq), zap.Error(err))
+		writeSyncLog(runID, qq, "warn", "好友", "historical_friend_infer_error", "推断历史好友失败", syncLogFields{Err: err})
 	}
 
 	return len(friendItems), nil
 }
 
-func syncVisitors(client *qzone.Client, qq string) (int, error) {
-	items, err := client.GetVisitors()
-	if err != nil {
+func syncVisitors(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
+	if err := checkSyncCanceled(ctx); err != nil {
 		return 0, err
 	}
+	fetchStarted := logPageFetchStart(runID, qq, "访客", 0, 0)
+	items, err := client.GetVisitors()
+	if err != nil {
+		logPageError(runID, qq, "访客", 0, 0, err, fetchStarted)
+		return 0, err
+	}
+	logPageFetchDone(runID, qq, "访客", 0, 0, len(items), fetchStarted)
 	records := make([]*model.Visitor, 0, len(items))
 	for _, item := range items {
 		visitorID := item.VisitorQQ
@@ -275,23 +590,37 @@ func syncVisitors(client *qzone.Client, qq string) (int, error) {
 		})
 	}
 	if err := dao.BatchUpsertVisitors(records); err != nil {
+		logPageError(runID, qq, "访客", 0, 0, err, fetchStarted)
 		return 0, err
 	}
+	logPageSaveDone(runID, qq, "访客", 0, 0, len(items), len(records), fetchStarted)
 	return len(records), nil
 }
 
-func syncVideos(client *qzone.Client, qq string) (int, error) {
+func syncVideos(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	offset, limit := 0, 20
 	for {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
+		fetchStarted := logPageFetchStart(runID, qq, "视频", offset, limit)
 		items, err := client.GetVideos(offset, limit)
 		if err != nil {
 			if total > 0 {
+				writeSyncLog(runID, qq, "warn", "视频", "page_error_keep_partial", "视频同步中断，保留已抓取数据", syncLogFields{
+					Offset: offset,
+					Limit:  limit,
+					Err:    err,
+				})
 				return total, nil
 			}
+			logPageError(runID, qq, "视频", offset, limit, err, fetchStarted)
 			return total, err
 		}
+		logPageFetchDone(runID, qq, "视频", offset, limit, len(items), fetchStarted)
 		if len(items) == 0 {
+			logPageNoMore(runID, qq, "视频", offset, limit)
 			return total, nil
 		}
 		records := make([]*model.Video, 0, len(items))
@@ -306,14 +635,17 @@ func syncVideos(client *qzone.Client, qq string) (int, error) {
 				Width:        item.Width,
 				Height:       item.Height,
 				Duration:     item.Duration,
+				PlayCount:    item.PlayCount,
 				CommentCount: item.CommentCount,
 				UploadTime:   item.UploadTime,
 			})
 		}
 		if err := dao.BatchUpsertVideos(records); err != nil {
+			logPageError(runID, qq, "视频", offset, limit, err, fetchStarted)
 			return total, err
 		}
 		total += len(records)
+		logPageSaveDone(runID, qq, "视频", offset, limit, len(items), len(records), fetchStarted)
 		if len(items) < limit {
 			return total, nil
 		}
@@ -322,18 +654,30 @@ func syncVideos(client *qzone.Client, qq string) (int, error) {
 	}
 }
 
-func syncFavorites(client *qzone.Client, qq string) (int, error) {
+func syncFavorites(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	offset, limit := 0, 20
 	for {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
+		fetchStarted := logPageFetchStart(runID, qq, "收藏", offset, limit)
 		items, err := client.GetFavorites(offset, limit)
 		if err != nil {
 			if total > 0 {
+				writeSyncLog(runID, qq, "warn", "收藏", "page_error_keep_partial", "收藏同步中断，保留已抓取数据", syncLogFields{
+					Offset: offset,
+					Limit:  limit,
+					Err:    err,
+				})
 				return total, nil
 			}
+			logPageError(runID, qq, "收藏", offset, limit, err, fetchStarted)
 			return total, err
 		}
+		logPageFetchDone(runID, qq, "收藏", offset, limit, len(items), fetchStarted)
 		if len(items) == 0 {
+			logPageNoMore(runID, qq, "收藏", offset, limit)
 			return total, nil
 		}
 		records := make([]*model.Favorite, 0, len(items))
@@ -352,9 +696,11 @@ func syncFavorites(client *qzone.Client, qq string) (int, error) {
 			})
 		}
 		if err := dao.BatchUpsertFavorites(records); err != nil {
+			logPageError(runID, qq, "收藏", offset, limit, err, fetchStarted)
 			return total, err
 		}
 		total += len(records)
+		logPageSaveDone(runID, qq, "收藏", offset, limit, len(items), len(records), fetchStarted)
 		if len(items) < limit {
 			return total, nil
 		}
@@ -363,18 +709,30 @@ func syncFavorites(client *qzone.Client, qq string) (int, error) {
 	}
 }
 
-func syncDiaries(client *qzone.Client, qq string) (int, error) {
+func syncDiaries(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	offset, limit := 0, 15
 	for {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
+		fetchStarted := logPageFetchStart(runID, qq, "私密日记", offset, limit)
 		items, err := client.GetDiaries(offset, limit)
 		if err != nil {
 			if total > 0 {
+				writeSyncLog(runID, qq, "warn", "私密日记", "page_error_keep_partial", "私密日记同步中断，保留已抓取数据", syncLogFields{
+					Offset: offset,
+					Limit:  limit,
+					Err:    err,
+				})
 				return total, nil
 			}
+			logPageError(runID, qq, "私密日记", offset, limit, err, fetchStarted)
 			return total, err
 		}
+		logPageFetchDone(runID, qq, "私密日记", offset, limit, len(items), fetchStarted)
 		if len(items) == 0 {
+			logPageNoMore(runID, qq, "私密日记", offset, limit)
 			return total, nil
 		}
 		records := make([]*model.Diary, 0, len(items))
@@ -390,9 +748,11 @@ func syncDiaries(client *qzone.Client, qq string) (int, error) {
 			})
 		}
 		if err := dao.BatchUpsertDiaries(records); err != nil {
+			logPageError(runID, qq, "私密日记", offset, limit, err, fetchStarted)
 			return total, err
 		}
 		total += len(records)
+		logPageSaveDone(runID, qq, "私密日记", offset, limit, len(items), len(records), fetchStarted)
 		if len(items) < limit {
 			return total, nil
 		}
@@ -401,21 +761,36 @@ func syncDiaries(client *qzone.Client, qq string) (int, error) {
 	}
 }
 
-func syncActivities(client *qzone.Client, qq string) (int, error) {
+func syncActivities(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	offset, limit := 0, 40
 	repeatedPages := 0
 
 	for page := 0; page < 500; page++ {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
+		fetchStarted := logPageFetchStart(runID, qq, "动态归档", offset, limit)
 		items, err := client.GetFeeds(offset, limit)
 		if err != nil {
 			if total > 0 {
 				logger.Warn("动态归档中断，保留已抓取数据", zap.String("qq", qq), zap.Int("saved", total), zap.Error(err))
+				writeSyncLog(runID, qq, "warn", "动态归档", "page_error_keep_partial", "动态归档中断，保留已抓取数据", syncLogFields{
+					Page:       pageNumber(offset, limit),
+					Offset:     offset,
+					Limit:      limit,
+					ItemsSaved: total,
+					Duration:   time.Since(fetchStarted),
+					Err:        err,
+				})
 				return total, nil
 			}
+			logPageError(runID, qq, "动态归档", offset, limit, err, fetchStarted)
 			return total, err
 		}
+		logPageFetchDone(runID, qq, "动态归档", offset, limit, len(items), fetchStarted)
 		if len(items) == 0 {
+			logPageNoMore(runID, qq, "动态归档", offset, limit)
 			return total, nil
 		}
 
@@ -426,6 +801,8 @@ func syncActivities(client *qzone.Client, qq string) (int, error) {
 				UserQQ:       qq,
 				FeedID:       item.FeedID,
 				FeedType:     item.FeedType,
+				AppID:        item.AppID,
+				RawType:      item.RawType,
 				ObjectID:     item.ObjectID,
 				Title:        item.Title,
 				Content:      item.Content,
@@ -433,6 +810,10 @@ func syncActivities(client *qzone.Client, qq string) (int, error) {
 				AuthorQQ:     item.AuthorQQ,
 				AuthorName:   item.AuthorName,
 				Images:       string(imagesJSON),
+				SourceName:   item.SourceName,
+				Device:       item.Device,
+				Location:     item.Location,
+				URL:          item.URL,
 				LikeCount:    item.LikeCount,
 				CommentCount: item.CommentCount,
 				ShareCount:   item.ShareCount,
@@ -442,16 +823,25 @@ func syncActivities(client *qzone.Client, qq string) (int, error) {
 			})
 		}
 		if err := dao.BatchUpsertActivities(activities); err != nil {
+			logPageError(runID, qq, "动态归档", offset, limit, err, fetchStarted)
 			return total, err
 		}
 		reconstructHistoricalObjects(qq, items)
 		backfillHistoricalInteractions(qq)
 
 		total += len(activities)
+		logPageSaveDone(runID, qq, "动态归档", offset, limit, len(items), len(activities), fetchStarted)
 
 		if pageHasNoProgress(items) {
 			repeatedPages++
 			if repeatedPages >= 2 {
+				writeSyncLog(runID, qq, "warn", "动态归档", "page_no_progress_stop", "连续分页未解析出有效进展，停止动态归档", syncLogFields{
+					Page:         pageNumber(offset, limit),
+					Offset:       offset,
+					Limit:        limit,
+					ItemsFetched: len(items),
+					ItemsSaved:   len(activities),
+				})
 				return total, nil
 			}
 		} else {
@@ -586,15 +976,22 @@ func inferHistoricalFriends(userQQ string) error {
 	return dao.BatchUpsertFriends(historical)
 }
 
-func syncTalks(client *qzone.Client, qq string) (int, error) {
+func syncTalks(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	offset, limit := 0, 20
 	for {
-		items, err := client.GetTalks(offset, limit)
-		if err != nil {
+		if err := checkSyncCanceled(ctx); err != nil {
 			return total, err
 		}
+		fetchStarted := logPageFetchStart(runID, qq, "说说", offset, limit)
+		items, err := client.GetTalks(offset, limit)
+		if err != nil {
+			logPageError(runID, qq, "说说", offset, limit, err, fetchStarted)
+			return total, err
+		}
+		logPageFetchDone(runID, qq, "说说", offset, limit, len(items), fetchStarted)
 		if len(items) == 0 {
+			logPageNoMore(runID, qq, "说说", offset, limit)
 			return total, nil
 		}
 		talks := make([]*model.Talk, 0, len(items))
@@ -609,6 +1006,9 @@ func syncTalks(client *qzone.Client, qq string) (int, error) {
 				Videos:       string(videosJSON),
 				Location:     item.Location,
 				Device:       item.Device,
+				SourceName:   item.SourceName,
+				SourceID:     item.SourceID,
+				AppID:        item.AppID,
 				LikeCount:    item.LikeCount,
 				CommentCount: item.CommentCount,
 				ShareCount:   item.ShareCount,
@@ -617,8 +1017,11 @@ func syncTalks(client *qzone.Client, qq string) (int, error) {
 		}
 		if err := dao.BatchUpsertTalks(talks); err != nil {
 			logger.Error("保存说说失败", zap.Error(err))
+			logPageError(runID, qq, "说说", offset, limit, err, fetchStarted)
+			return total, err
 		}
 		total += len(items)
+		logPageSaveDone(runID, qq, "说说", offset, limit, len(items), len(talks), fetchStarted)
 		offset += limit
 		if len(items) < limit {
 			return total, nil
@@ -627,20 +1030,33 @@ func syncTalks(client *qzone.Client, qq string) (int, error) {
 	}
 }
 
-func syncBlogs(client *qzone.Client, qq string) (int, error) {
+func syncBlogs(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	offset, limit := 0, 20
 	for {
-		items, err := client.GetBlogList(offset, limit)
-		if err != nil {
+		if err := checkSyncCanceled(ctx); err != nil {
 			return total, err
 		}
+		fetchStarted := logPageFetchStart(runID, qq, "日志", offset, limit)
+		items, err := client.GetBlogList(offset, limit)
+		if err != nil {
+			logPageError(runID, qq, "日志", offset, limit, err, fetchStarted)
+			return total, err
+		}
+		logPageFetchDone(runID, qq, "日志", offset, limit, len(items), fetchStarted)
 		if len(items) == 0 {
+			logPageNoMore(runID, qq, "日志", offset, limit)
 			return total, nil
 		}
 		blogs := make([]*model.Blog, 0, len(items))
 		for _, item := range items {
-			content, _ := client.GetBlogContent(item.BlogID)
+			content, contentErr := client.GetBlogContent(item.BlogID)
+			if contentErr != nil {
+				writeSyncLog(runID, qq, "warn", "日志", "detail_fetch_error", "日志正文拉取失败，使用摘要兜底", syncLogFields{
+					Err:     contentErr,
+					Context: map[string]any{"blog_id": item.BlogID},
+				})
+			}
 			if content == "" {
 				content = item.Summary
 			}
@@ -657,12 +1073,16 @@ func syncBlogs(client *qzone.Client, qq string) (int, error) {
 				CommentCount: item.CommentCount,
 				ReadCount:    item.ReadCount,
 				PublishTime:  item.PublishTime,
+				ModifyTime:   item.ModifyTime,
 			})
 		}
 		if err := dao.BatchUpsertBlogs(blogs); err != nil {
 			logger.Error("保存日志失败", zap.Error(err))
+			logPageError(runID, qq, "日志", offset, limit, err, fetchStarted)
+			return total, err
 		}
 		total += len(items)
+		logPageSaveDone(runID, qq, "日志", offset, limit, len(items), len(blogs), fetchStarted)
 		offset += limit
 		if len(items) < limit {
 			return total, nil
@@ -671,30 +1091,48 @@ func syncBlogs(client *qzone.Client, qq string) (int, error) {
 	}
 }
 
-func syncAlbums(client *qzone.Client, qq string) (int, error) {
-	items, err := client.GetAlbums()
-	if err != nil {
+func syncAlbums(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
+	if err := checkSyncCanceled(ctx); err != nil {
 		return 0, err
 	}
+	fetchStarted := logPageFetchStart(runID, qq, "相册", 0, 0)
+	items, err := client.GetAlbums()
+	if err != nil {
+		logPageError(runID, qq, "相册", 0, 0, err, fetchStarted)
+		return 0, err
+	}
+	logPageFetchDone(runID, qq, "相册", 0, 0, len(items), fetchStarted)
 	albums := make([]*model.Album, 0, len(items))
 	for _, item := range items {
 		albums = append(albums, &model.Album{
-			UserQQ:      qq,
-			AlbumID:     item.AlbumID,
-			Name:        item.Name,
-			Description: item.Description,
-			CoverURL:    item.CoverURL,
-			PhotoCount:  item.PhotoCount,
-			CreateTime:  item.CreateTime,
+			UserQQ:         qq,
+			AlbumID:        item.AlbumID,
+			Name:           item.Name,
+			Description:    item.Description,
+			CoverURL:       item.CoverURL,
+			PhotoCount:     item.PhotoCount,
+			Privacy:        item.Privacy,
+			CreateTime:     item.CreateTime,
+			LastUploadTime: item.LastUploadTime,
 		})
 	}
 	if err := dao.BatchUpsertAlbums(albums); err != nil {
 		logger.Error("保存相册失败", zap.Error(err))
+		logPageError(runID, qq, "相册", 0, 0, err, fetchStarted)
+		return 0, err
 	}
+	logPageSaveDone(runID, qq, "相册", 0, 0, len(items), len(albums), fetchStarted)
 	total := len(items)
 	for _, item := range items {
-		if err := syncPhotos(client, qq, item.AlbumID); err != nil {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
+		if err := syncPhotos(ctx, client, qq, item.AlbumID, runID); err != nil {
 			logger.Error("同步照片失败", zap.String("album", item.AlbumID), zap.Error(err))
+			writeSyncLog(runID, qq, "warn", "相册", "photo_album_error", "同步相册照片失败", syncLogFields{
+				Err:     err,
+				Context: map[string]any{"album_id": item.AlbumID},
+			})
 		}
 	}
 	return total, nil
@@ -712,19 +1150,31 @@ func reconstructHistoricalObjects(qq string, feeds []qzone.FeedItem) {
 	for _, item := range feeds {
 		switch item.FeedType {
 		case "talk":
+			// 别人对我的动作（赞/评论我的说说）：作者是对方，正文里混着"X赞了我 ： <我的说说>"，
+			// 需剥离动作前缀只留我自己的正文；取不到正文就不重建假说说。
+			content := item.Content
+			if item.AuthorQQ != "" && item.AuthorQQ != qq {
+				content = extractUserContentFromFeed(item.Content)
+			} else {
+				content = normalizeContent(content)
+			}
 			talkID := stableObjectID("talk", item)
-			talks = append(talks, &model.Talk{
-				UserQQ:       qq,
-				TalkID:       talkID,
-				Content:      item.Content,
-				Images:       mustJSON(item.Images),
-				Videos:       "[]",
-				IsDeleted:    true,
-				LikeCount:    item.LikeCount,
-				CommentCount: item.CommentCount,
-				ShareCount:   item.ShareCount,
-				PublishTime:  item.PublishTime,
-			})
+			if strings.TrimSpace(content) != "" {
+				talkID = contentTalkID(content) // 按内容生成稳定 ID，多次被赞的同一条说说天然合并
+				talks = append(talks, &model.Talk{
+					UserQQ:       qq,
+					TalkID:       talkID,
+					Content:      content,
+					Images:       mustJSON(item.Images),
+					Videos:       "[]",
+					IsDeleted:    true,
+					IsSpam:       isSpamContent(content),
+					LikeCount:    item.LikeCount,
+					CommentCount: item.CommentCount,
+					ShareCount:   item.ShareCount,
+					PublishTime:  item.PublishTime,
+				})
+			}
 			if strings.Contains(item.StateText, "赞了我的说说") {
 				likes = append(likes, &model.Like{
 					UserQQ:      qq,
@@ -848,7 +1298,7 @@ func backfillHistoricalInteractions(qq string) {
 				UserQQ:      qq,
 				LikeID:      "like_" + firstNonEmpty(item.FeedID, item.ObjectID),
 				TargetType:  "talk",
-				TargetID:    activityTargetID("talk", item),
+				TargetID:    canonicalActivityTargetID(qq, "talk", item),
 				LikerQQ:     item.AuthorQQ,
 				LikerName:   firstNonEmpty(item.AuthorName, item.AuthorQQ),
 				LikerAvatar: qzone.GetPortrait(item.AuthorQQ),
@@ -856,7 +1306,7 @@ func backfillHistoricalInteractions(qq string) {
 			})
 		case isHistoricalCommentState(item):
 			targetType := firstNonEmpty(item.FeedType, "talk")
-			targetID := activityTargetID(targetType, item)
+			targetID := canonicalActivityTargetID(qq, targetType, item)
 			commentDetail := extractHistoricalCommentDetail(item)
 			authorQQ := firstNonEmpty(commentDetail.AuthorQQ, item.AuthorQQ)
 			authorName := firstNonEmpty(commentDetail.AuthorName, item.AuthorName, authorQQ)
@@ -905,7 +1355,7 @@ func backfillHistoricalInteractions(qq string) {
 				UserQQ:     qq,
 				ShareID:    "share_" + firstNonEmpty(item.FeedID, item.ObjectID),
 				TargetType: targetType,
-				TargetID:   activityTargetID(targetType, item),
+				TargetID:   canonicalActivityTargetID(qq, targetType, item),
 				SharerQQ:   item.AuthorQQ,
 				SharerName: firstNonEmpty(item.AuthorName, item.AuthorQQ),
 				Comment:    firstNonEmpty(item.Content, item.Title, "转发了你的历史内容"),
@@ -1264,14 +1714,21 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func syncPhotos(client *qzone.Client, qq, albumID string) error {
+func syncPhotos(ctx context.Context, client *qzone.Client, qq, albumID, runID string) error {
 	offset, limit := 0, 50
 	for {
-		items, err := client.GetPhotos(albumID, offset, limit)
-		if err != nil {
+		if err := checkSyncCanceled(ctx); err != nil {
 			return err
 		}
+		fetchStarted := logPageFetchStart(runID, qq, "照片", offset, limit)
+		items, err := client.GetPhotos(albumID, offset, limit)
+		if err != nil {
+			logPageError(runID, qq, "照片", offset, limit, err, fetchStarted)
+			return err
+		}
+		logPageFetchDone(runID, qq, "照片", offset, limit, len(items), fetchStarted)
 		if len(items) == 0 {
+			logPageNoMore(runID, qq, "照片", offset, limit)
 			return nil
 		}
 		photos := make([]*model.Photo, 0, len(items))
@@ -1284,6 +1741,8 @@ func syncPhotos(client *qzone.Client, qq, albumID string) error {
 				Description: item.Description,
 				URL:         item.URL,
 				ThumbURL:    item.ThumbURL,
+				OwnerQQ:     item.OwnerQQ,
+				OwnerName:   item.OwnerName,
 				Width:       item.Width,
 				Height:      item.Height,
 				PhotoTime:   item.PhotoTime,
@@ -1291,7 +1750,10 @@ func syncPhotos(client *qzone.Client, qq, albumID string) error {
 		}
 		if err := dao.BatchUpsertPhotos(photos); err != nil {
 			logger.Error("保存照片失败", zap.Error(err))
+			logPageError(runID, qq, "照片", offset, limit, err, fetchStarted)
+			return err
 		}
+		logPageSaveDone(runID, qq, "照片", offset, limit, len(items), len(photos), fetchStarted)
 		offset += limit
 		if len(items) < limit {
 			return nil
@@ -1299,34 +1761,48 @@ func syncPhotos(client *qzone.Client, qq, albumID string) error {
 	}
 }
 
-func syncMessages(client *qzone.Client, qq string) (int, error) {
+func syncMessages(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	offset, limit := 0, 20
 	for {
-		items, err := client.GetMessages(offset, limit)
-		if err != nil {
+		if err := checkSyncCanceled(ctx); err != nil {
 			return total, err
 		}
+		fetchStarted := logPageFetchStart(runID, qq, "留言", offset, limit)
+		items, err := client.GetMessages(offset, limit)
+		if err != nil {
+			logPageError(runID, qq, "留言", offset, limit, err, fetchStarted)
+			return total, err
+		}
+		logPageFetchDone(runID, qq, "留言", offset, limit, len(items), fetchStarted)
 		if len(items) == 0 {
+			logPageNoMore(runID, qq, "留言", offset, limit)
 			return total, nil
 		}
 		messages := make([]*model.Message, 0, len(items))
 		for _, item := range items {
 			messages = append(messages, &model.Message{
-				UserQQ:       qq,
-				MessageID:    item.MessageID,
-				AuthorQQ:     item.AuthorQQ,
-				AuthorName:   item.AuthorName,
-				AuthorAvatar: item.AuthorAvatar,
-				Content:      item.Content,
-				ReplyContent: item.ReplyContent,
-				MessageTime:  item.MessageTime,
+				UserQQ:            qq,
+				MessageID:         item.MessageID,
+				AuthorQQ:          item.AuthorQQ,
+				AuthorName:        item.AuthorName,
+				AuthorAvatar:      item.AuthorAvatar,
+				Content:           item.Content,
+				ReplyContent:      item.ReplyContent,
+				ReplyAuthorQQ:     item.ReplyAuthorQQ,
+				ReplyAuthorName:   item.ReplyAuthorName,
+				ReplyAuthorAvatar: item.ReplyAuthorAvatar,
+				ReplyTime:         item.ReplyTime,
+				MessageTime:       item.MessageTime,
 			})
 		}
 		if err := dao.BatchUpsertMessages(messages); err != nil {
 			logger.Error("保存留言失败", zap.Error(err))
+			logPageError(runID, qq, "留言", offset, limit, err, fetchStarted)
+			return total, err
 		}
 		total += len(items)
+		logPageSaveDone(runID, qq, "留言", offset, limit, len(items), len(messages), fetchStarted)
 		offset += limit
 		if len(items) < limit {
 			return total, nil
@@ -1334,7 +1810,7 @@ func syncMessages(client *qzone.Client, qq string) (int, error) {
 	}
 }
 
-func syncComments(client *qzone.Client, qq string) (int, error) {
+func syncComments(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	talks, err := dao.ListTalkSummaries(qq)
 	if err != nil {
@@ -1342,37 +1818,59 @@ func syncComments(client *qzone.Client, qq string) (int, error) {
 	}
 
 	for _, talk := range talks {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
 		if talk.CommentCount == 0 {
 			continue
 		}
 		offset := 0
 		for {
+			if err := checkSyncCanceled(ctx); err != nil {
+				return total, err
+			}
+			fetchStarted := logPageFetchStart(runID, qq, "评论", offset, 20)
 			items, err := client.GetTalkComments(talk.TalkID, offset, 20)
 			if err != nil {
 				logger.Warn("获取说说评论失败", zap.String("talk", talk.TalkID), zap.Error(err))
+				writeSyncLog(runID, qq, "warn", "评论", "target_page_error", "获取说说评论失败", syncLogFields{
+					Page:     pageNumber(offset, 20),
+					Offset:   offset,
+					Limit:    20,
+					Duration: time.Since(fetchStarted),
+					Err:      err,
+					Context:  map[string]any{"target_type": "talk", "target_id": talk.TalkID},
+				})
 				break
 			}
+			logPageFetchDone(runID, qq, "评论", offset, 20, len(items), fetchStarted)
 			if len(items) == 0 {
 				break
 			}
 			comments := make([]*model.Comment, 0, len(items))
 			for _, item := range items {
 				comments = append(comments, &model.Comment{
-					UserQQ:      qq,
-					CommentID:   item.CommentID,
-					TargetType:  "talk",
-					TargetID:    talk.TalkID,
-					AuthorQQ:    item.AuthorQQ,
-					AuthorName:  item.AuthorName,
-					Content:     item.Content,
-					ReplyToQQ:   item.ReplyToQQ,
-					ReplyToName: item.ReplyToName,
-					CommentTime: item.CommentTime,
+					UserQQ:        qq,
+					CommentID:     item.CommentID,
+					TargetType:    "talk",
+					TargetID:      talk.TalkID,
+					AuthorQQ:      item.AuthorQQ,
+					AuthorName:    item.AuthorName,
+					Content:       item.Content,
+					ReplyToQQ:     item.ReplyToQQ,
+					ReplyToName:   item.ReplyToName,
+					ReplyToAvatar: item.ReplyToAvatar,
+					Floor:         item.Floor,
+					CommentTime:   item.CommentTime,
 				})
 			}
 			if err := dao.BatchUpsertComments(comments); err != nil {
 				logger.Error("保存评论失败", zap.Error(err))
+				logPageError(runID, qq, "评论", offset, 20, err, fetchStarted)
+				return total, err
 			}
+			total += len(comments)
+			logPageSaveDone(runID, qq, "评论", offset, 20, len(items), len(comments), fetchStarted)
 			offset += 20
 			if len(items) < 20 {
 				break
@@ -1387,38 +1885,60 @@ func syncComments(client *qzone.Client, qq string) (int, error) {
 		return 0, fmt.Errorf("获取日志列表失败: %w", err)
 	}
 	for _, blog := range blogs {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
 		if blog.CommentCount == 0 {
 			continue
 		}
 		offset := 0
 		for {
+			if err := checkSyncCanceled(ctx); err != nil {
+				return total, err
+			}
+			fetchStarted := logPageFetchStart(runID, qq, "评论", offset, 50)
 			items, err := client.GetBlogComments(blog.BlogID, offset, 50)
 			if err != nil {
 				logger.Warn("获取日志评论失败", zap.String("blog", blog.BlogID), zap.Error(err))
+				writeSyncLog(runID, qq, "warn", "评论", "target_page_error", "获取日志评论失败", syncLogFields{
+					Page:     pageNumber(offset, 50),
+					Offset:   offset,
+					Limit:    50,
+					Duration: time.Since(fetchStarted),
+					Err:      err,
+					Context:  map[string]any{"target_type": "blog", "target_id": blog.BlogID},
+				})
 				break
 			}
+			logPageFetchDone(runID, qq, "评论", offset, 50, len(items), fetchStarted)
 			if len(items) == 0 {
 				break
 			}
 			comments := make([]*model.Comment, 0, len(items))
 			for _, item := range items {
 				comments = append(comments, &model.Comment{
-					UserQQ:       qq,
-					CommentID:    item.CommentID,
-					TargetType:   "blog",
-					TargetID:     blog.BlogID,
-					AuthorQQ:     item.AuthorQQ,
-					AuthorName:   item.AuthorName,
-					AuthorAvatar: item.AuthorAvatar,
-					Content:      item.Content,
-					ReplyToQQ:    item.ReplyToQQ,
-					ReplyToName:  item.ReplyToName,
-					CommentTime:  item.CommentTime,
+					UserQQ:        qq,
+					CommentID:     item.CommentID,
+					TargetType:    "blog",
+					TargetID:      blog.BlogID,
+					AuthorQQ:      item.AuthorQQ,
+					AuthorName:    item.AuthorName,
+					AuthorAvatar:  item.AuthorAvatar,
+					Content:       item.Content,
+					ReplyToQQ:     item.ReplyToQQ,
+					ReplyToName:   item.ReplyToName,
+					ReplyToAvatar: item.ReplyToAvatar,
+					Floor:         item.Floor,
+					CommentTime:   item.CommentTime,
 				})
 			}
 			if err := dao.BatchUpsertComments(comments); err != nil {
 				logger.Error("保存日志评论失败", zap.Error(err))
+				logPageError(runID, qq, "评论", offset, 50, err, fetchStarted)
+				return total, err
 			}
+			total += len(comments)
+			logPageSaveDone(runID, qq, "评论", offset, 50, len(items), len(comments), fetchStarted)
 			offset += 50
 			if len(items) < 50 {
 				break
@@ -1433,35 +1953,57 @@ func syncComments(client *qzone.Client, qq string) (int, error) {
 		return 0, fmt.Errorf("获取照片列表失败: %w", err)
 	}
 	for _, photo := range photos {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
 		offset := 0
 		for {
+			if err := checkSyncCanceled(ctx); err != nil {
+				return total, err
+			}
+			fetchStarted := logPageFetchStart(runID, qq, "评论", offset, 50)
 			items, err := client.GetPhotoComments(photo.AlbumID, photo.PhotoID, offset, 50)
 			if err != nil {
 				logger.Warn("获取照片评论失败", zap.String("album", photo.AlbumID), zap.String("photo", photo.PhotoID), zap.Error(err))
+				writeSyncLog(runID, qq, "warn", "评论", "target_page_error", "获取照片评论失败", syncLogFields{
+					Page:     pageNumber(offset, 50),
+					Offset:   offset,
+					Limit:    50,
+					Duration: time.Since(fetchStarted),
+					Err:      err,
+					Context:  map[string]any{"target_type": "photo", "target_id": photo.PhotoID, "album_id": photo.AlbumID},
+				})
 				break
 			}
+			logPageFetchDone(runID, qq, "评论", offset, 50, len(items), fetchStarted)
 			if len(items) == 0 {
 				break
 			}
 			comments := make([]*model.Comment, 0, len(items))
 			for _, item := range items {
 				comments = append(comments, &model.Comment{
-					UserQQ:       qq,
-					CommentID:    item.CommentID,
-					TargetType:   "photo",
-					TargetID:     photo.PhotoID,
-					AuthorQQ:     item.AuthorQQ,
-					AuthorName:   item.AuthorName,
-					AuthorAvatar: item.AuthorAvatar,
-					Content:      item.Content,
-					ReplyToQQ:    item.ReplyToQQ,
-					ReplyToName:  item.ReplyToName,
-					CommentTime:  item.CommentTime,
+					UserQQ:        qq,
+					CommentID:     item.CommentID,
+					TargetType:    "photo",
+					TargetID:      photo.PhotoID,
+					AuthorQQ:      item.AuthorQQ,
+					AuthorName:    item.AuthorName,
+					AuthorAvatar:  item.AuthorAvatar,
+					Content:       item.Content,
+					ReplyToQQ:     item.ReplyToQQ,
+					ReplyToName:   item.ReplyToName,
+					ReplyToAvatar: item.ReplyToAvatar,
+					Floor:         item.Floor,
+					CommentTime:   item.CommentTime,
 				})
 			}
 			if err := dao.BatchUpsertComments(comments); err != nil {
 				logger.Error("保存照片评论失败", zap.Error(err))
+				logPageError(runID, qq, "评论", offset, 50, err, fetchStarted)
+				return total, err
 			}
+			total += len(comments)
+			logPageSaveDone(runID, qq, "评论", offset, 50, len(items), len(comments), fetchStarted)
 			offset += 50
 			if len(items) < 50 {
 				break
@@ -1474,7 +2016,7 @@ func syncComments(client *qzone.Client, qq string) (int, error) {
 	return total, nil
 }
 
-func syncLikes(client *qzone.Client, qq string) (int, error) {
+func syncLikes(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	talks, err := dao.ListTalkSummaries(qq)
 	if err != nil {
@@ -1482,15 +2024,27 @@ func syncLikes(client *qzone.Client, qq string) (int, error) {
 	}
 
 	for _, talk := range talks {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
 		if talk.LikeCount == 0 {
 			continue
 		}
+		logOffset := total
+		fetchStarted := logPageFetchStart(runID, qq, "点赞", logOffset, 100)
 		items, err := client.GetTalkLikes(talk.TalkID)
 		if err != nil {
 			logger.Warn("获取说说点赞失败", zap.String("talk", talk.TalkID), zap.Error(err))
+			writeSyncLog(runID, qq, "warn", "点赞", "target_fetch_error", "获取说说点赞失败", syncLogFields{
+				ItemsSaved: total,
+				Duration:   time.Since(fetchStarted),
+				Err:        err,
+				Context:    map[string]any{"target_type": "talk", "target_id": talk.TalkID},
+			})
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
+		logPageFetchDone(runID, qq, "点赞", logOffset, 100, len(items), fetchStarted)
 		likes := make([]*model.Like, 0, len(items))
 		for _, item := range items {
 			likeID := fmt.Sprintf("talk_%s_%s", talk.TalkID, item.LikerQQ)
@@ -1510,15 +2064,18 @@ func syncLikes(client *qzone.Client, qq string) (int, error) {
 		}
 		if err := dao.BatchUpsertLikes(likes); err != nil {
 			logger.Error("保存点赞失败", zap.Error(err))
+			logPageError(runID, qq, "点赞", logOffset, 100, err, fetchStarted)
+			return total, err
 		}
 		total += len(items)
+		logPageSaveDone(runID, qq, "点赞", logOffset, 100, len(items), len(likes), fetchStarted)
 		time.Sleep(200 * time.Millisecond)
 	}
 
 	return total, nil
 }
 
-func syncShares(client *qzone.Client, qq string) (int, error) {
+func syncShares(ctx context.Context, client *qzone.Client, qq, runID string) (int, error) {
 	total := 0
 	talks, err := dao.ListTalkSummaries(qq)
 	if err != nil {
@@ -1526,16 +2083,32 @@ func syncShares(client *qzone.Client, qq string) (int, error) {
 	}
 
 	for _, talk := range talks {
+		if err := checkSyncCanceled(ctx); err != nil {
+			return total, err
+		}
 		if talk.ShareCount == 0 {
 			continue
 		}
 		offset := 0
 		for {
+			if err := checkSyncCanceled(ctx); err != nil {
+				return total, err
+			}
+			fetchStarted := logPageFetchStart(runID, qq, "转发", offset, 20)
 			items, err := client.GetShares("talk", talk.TalkID, offset, 20)
 			if err != nil {
 				logger.Warn("获取说说转发失败", zap.String("talk", talk.TalkID), zap.Error(err))
+				writeSyncLog(runID, qq, "warn", "转发", "target_page_error", "获取说说转发失败", syncLogFields{
+					Page:     pageNumber(offset, 20),
+					Offset:   offset,
+					Limit:    20,
+					Duration: time.Since(fetchStarted),
+					Err:      err,
+					Context:  map[string]any{"target_type": "talk", "target_id": talk.TalkID},
+				})
 				break
 			}
+			logPageFetchDone(runID, qq, "转发", offset, 20, len(items), fetchStarted)
 			if len(items) == 0 {
 				break
 			}
@@ -1546,19 +2119,24 @@ func syncShares(client *qzone.Client, qq string) (int, error) {
 					shareID = "talk_" + item.ShareID
 				}
 				shares = append(shares, &model.Share{
-					UserQQ:     qq,
-					ShareID:    shareID,
-					TargetType: "talk",
-					TargetID:   talk.TalkID,
-					SharerQQ:   item.SharerQQ,
-					SharerName: item.SharerName,
-					Comment:    item.Comment,
-					ShareTime:  item.ShareTime,
+					UserQQ:       qq,
+					ShareID:      shareID,
+					TargetType:   "talk",
+					TargetID:     talk.TalkID,
+					SharerQQ:     item.SharerQQ,
+					SharerName:   item.SharerName,
+					SharerAvatar: item.SharerAvatar,
+					Comment:      item.Comment,
+					ShareTime:    item.ShareTime,
 				})
 			}
 			if err := dao.BatchUpsertShares(shares); err != nil {
 				logger.Error("保存转发失败", zap.Error(err))
+				logPageError(runID, qq, "转发", offset, 20, err, fetchStarted)
+				return total, err
 			}
+			total += len(shares)
+			logPageSaveDone(runID, qq, "转发", offset, 20, len(items), len(shares), fetchStarted)
 			offset += 20
 			if len(items) < 20 {
 				break

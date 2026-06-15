@@ -9,14 +9,16 @@ import (
 
 // CommentItem 评论数据项
 type CommentItem struct {
-	CommentID    string
-	AuthorQQ     string
-	AuthorName   string
-	AuthorAvatar string
-	Content      string
-	ReplyToQQ    string
-	ReplyToName  string
-	CommentTime  time.Time
+	CommentID     string
+	AuthorQQ      string
+	AuthorName    string
+	AuthorAvatar  string
+	Content       string
+	ReplyToQQ     string
+	ReplyToName   string
+	ReplyToAvatar string
+	Floor         int
+	CommentTime   time.Time
 }
 
 // GetTalkComments 获取说说评论列表（真实 API: emotion_cgi_getcmtreply_v6）
@@ -154,13 +156,15 @@ func parseCommentItems(prefix string, offset int, commentList []interface{}) ([]
 		}
 
 		comment := CommentItem{
-			CommentID:    commentID,
-			AuthorQQ:     pickCommentUserID(cMap, poster),
-			AuthorName:   cleanPlainText(pickCommentUserName(cMap, poster)),
-			AuthorAvatar: pickCommentUserAvatar(cMap, poster),
-			Content:      cleanPlainText(getStringValue(cMap, "content")),
-			ReplyToQQ:    pickCommentUserID(nil, replyTo),
-			ReplyToName:  cleanPlainText(pickCommentUserName(nil, replyTo)),
+			CommentID:     commentID,
+			AuthorQQ:      pickCommentUserID(cMap, poster),
+			AuthorName:    cleanPlainText(pickCommentUserName(cMap, poster)),
+			AuthorAvatar:  pickCommentUserAvatar(cMap, poster),
+			Content:       cleanPlainText(getStringValue(cMap, "content")),
+			ReplyToQQ:     pickCommentUserID(nil, replyTo),
+			ReplyToName:   cleanPlainText(pickCommentUserName(nil, replyTo)),
+			ReplyToAvatar: pickCommentUserAvatar(nil, replyTo),
+			Floor:         getIntValue(cMap, "floor"),
 		}
 
 		if createTime := pickCommentTime(cMap); createTime > 0 {

@@ -3,7 +3,7 @@ server:
   # HTTP 服务绑定地址
   host: "127.0.0.1"
   # HTTP 服务端口
-  port: 8080
+  port: 8081
   # Gin 运行模式，可选：debug、release、test
   mode: "debug"
 
@@ -22,6 +22,23 @@ database:
 qzone:
   # 登录二维码有效等待时长，单位：秒
   login_timeout: 300
+  # 全局最小请求间隔（毫秒），抓取与媒体下载共用
+  request_interval_ms: 800
+  # 出站最大并发
+  max_concurrency: 3
+  # 随机抖动上限（毫秒），避免规律请求
+  jitter_ms: 600
+
+# 媒体本地化配置
+media:
+  # 媒体落盘目录
+  dir: "./data/media"
+  # 媒体下载并发（受 qzone 全局限速约束）
+  download_concurrency: 3
+  # 单个媒体最大重试次数
+  max_retries: 3
+  # 是否下载视频原片（默认关，仅存封面）
+  download_videos: false
 
 # 应用日志配置
 log:

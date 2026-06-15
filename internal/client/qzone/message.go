@@ -9,13 +9,17 @@ import (
 
 // MessageItem 留言数据项
 type MessageItem struct {
-	MessageID    string
-	AuthorQQ     string
-	AuthorName   string
-	AuthorAvatar string
-	Content      string
-	ReplyContent string
-	MessageTime  time.Time
+	MessageID         string
+	AuthorQQ          string
+	AuthorName        string
+	AuthorAvatar      string
+	Content           string
+	ReplyContent      string
+	ReplyAuthorQQ     string
+	ReplyAuthorName   string
+	ReplyAuthorAvatar string
+	ReplyTime         time.Time
+	MessageTime       time.Time
 }
 
 // GetMessages 获取留言板消息
@@ -80,6 +84,16 @@ func (c *Client) GetMessages(offset, limit int) ([]MessageItem, error) {
 		if replyList := getSliceValue(msgMap, "replyList"); len(replyList) > 0 {
 			if reply, ok := replyList[0].(map[string]interface{}); ok {
 				msg.ReplyContent = cleanPlainText(getStringValue(reply, "content"))
+				msg.ReplyAuthorQQ = pickFirstNonEmpty(getNumericString(reply, "uin"), getNumericString(reply, "replyUin"))
+				msg.ReplyAuthorName = cleanPlainText(pickFirstNonEmpty(getStringValue(reply, "nickname"), getStringValue(reply, "name")))
+				msg.ReplyAuthorAvatar = getStringValue(reply, "avatar")
+				if replyTime := firstPositiveInt64(
+					getInt64Value(reply, "pubtime"),
+					getInt64Value(reply, "time"),
+					getInt64Value(reply, "createTime"),
+				); replyTime > 0 {
+					msg.ReplyTime = time.Unix(replyTime, 0)
+				}
 			}
 		}
 

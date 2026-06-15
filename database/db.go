@@ -86,6 +86,9 @@ func autoMigrate() error {
 		&model.Like{},
 		&model.Share{},
 		&model.Mention{},
+		&model.MediaAsset{},
+		&model.SyncState{},
+		&model.SyncLog{},
 	)
 }
 

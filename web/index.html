@@ -3,68 +3,92 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>QQ 空间回忆</title>
+        <meta name="theme-color" content="#f4efe6" />
+        <title>时光档案馆 · QQ 空间记忆</title>
+        <link rel="preconnect" href="https://q.qlogo.cn" />
         <link rel="stylesheet" href="/static/css/style.css" />
         <link
             rel="icon"
-            href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231f4fd8'/><text x='50' y='62' text-anchor='middle' font-size='54' fill='white' font-family='Arial'>Q</text></svg>"
+            href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%232f5fae'/><text x='50' y='64' text-anchor='middle' font-size='52' fill='%23f4efe6' font-family='Georgia,serif'>时</text></svg>"
         />
     </head>
     <body>
-        <!-- 登录页面 -->
+        <!-- ===================== 登录页 ===================== -->
         <div id="login-page" class="page active">
-            <div class="login-bg">
-                <div class="login-aurora login-aurora-a"></div>
-                <div class="login-aurora login-aurora-b"></div>
-                <div class="login-sidecopy">
-                    <div class="login-badge">Qzone Memory</div>
-                    <div class="login-logo">
-                        <div class="logo-icon">Q</div>
-                        <h1>QQ 空间回忆</h1>
-                        <p class="login-subtitle">
-                            完整回看 QQ 空间中的说说、日志、相册、留言与互动记录
+            <div class="auth">
+                <section class="auth-hero">
+                    <div class="auth-brand">
+                        <span class="brand-mark">时</span>
+                        <div class="brand-text">
+                            <span class="brand-name">时光档案馆</span>
+                            <span class="brand-en">QQ Zone · Memory Archive</span>
+                        </div>
+                    </div>
+
+                    <div class="auth-hero-body">
+                        <p class="kicker kicker-light">Reopen Your Space</p>
+                        <h1 class="auth-headline">
+                            <span>把那些年的</span>
+                            <span>说说、相册与旧友</span>
+                            <span>重新收进一座档案馆</span>
+                        </h1>
+                        <p class="auth-lede">
+                            登录后，本地整理你的 QQ
+                            空间历史——说说、日志、相册、留言、互动与早已失联的联系人，按时间与人物重新归档，慢慢翻阅。
                         </p>
                     </div>
-                    <p class="sidecopy-kicker">完整回忆</p>
-                    <h2>找回你的 QQ 空间完整历史回忆</h2>
-                    <p class="sidecopy-text">
-                        登录后可按分类浏览过往内容与互动痕迹，尽可能完整地重访你的
-                        QQ 空间记录
+
+                    <ul class="auth-points">
+                        <li>
+                            <strong>按时间回看</strong>
+                            <span>逐年逐月铺开，重走当时的轨迹</span>
+                        </li>
+                        <li>
+                            <strong>按内容归档</strong>
+                            <span>说说、相册、留言、日志各自成卷</span>
+                        </li>
+                        <li>
+                            <strong>按旧友寻人</strong>
+                            <span>从联系人重新进入共同的回忆</span>
+                        </li>
+                    </ul>
+
+                    <p class="auth-hero-foot">
+                        数据全程保存在本地，仅用于整理与浏览你自己的空间。
                     </p>
-                    <div class="login-tips">
-                        <div class="login-tip">
-                            <strong>分类浏览</strong>
-                            <span>按内容类型查看历史数据和互动记录</span>
-                        </div>
-                        <div class="login-tip">
-                            <strong>同步可见</strong>
-                            <span>同步进度和状态在页面内实时反馈</span>
-                        </div>
+                </section>
+
+                <section class="auth-card">
+                    <div class="auth-stamp" aria-hidden="true">
+                        <span>MEMORY</span>
+                        <span>ARCHIVE</span>
                     </div>
-                </div>
-                <div class="login-card">
-                    <div class="login-panel-head">
-                        <p class="login-panel-kicker">账号登录</p>
-                        <h3>选择登录方式</h3>
+                    <div class="auth-card-head">
+                        <p class="kicker">进入档案馆</p>
+                        <h2>连接 QQ 空间</h2>
                     </div>
-                    <div class="login-mode-switch">
+
+                    <div class="seg" role="tablist">
                         <button
                             id="login-mode-qr"
-                            class="login-mode-btn active"
+                            class="seg-btn active"
+                            type="button"
                             onclick="app.switchLoginMode('qr')"
                         >
                             扫码登录
                         </button>
                         <button
                             id="login-mode-input"
-                            class="login-mode-btn"
+                            class="seg-btn"
+                            type="button"
                             onclick="app.switchLoginMode('input')"
                         >
                             输入 QQ
                         </button>
                     </div>
+
                     <div id="login-panel-qr" class="login-panel active">
-                        <div class="qr-container">
+                        <div class="qr-frame">
                             <div id="qr-loading" class="qr-placeholder">
                                 <div class="spinner"></div>
                                 <p>正在生成二维码</p>
@@ -75,9 +99,10 @@
                                 alt="登录二维码"
                             />
                             <div id="qr-expired" class="qr-overlay hidden">
-                                <p>二维码已失效，请重新获取</p>
+                                <p>二维码已失效</p>
                                 <button
                                     class="btn btn-primary btn-sm"
+                                    type="button"
                                     onclick="app.refreshQRCode()"
                                 >
                                     重新获取
@@ -89,253 +114,330 @@
                             <span id="status-text">请使用手机 QQ 扫码</span>
                         </div>
                     </div>
+
                     <div id="login-panel-input" class="login-panel hidden">
                         <form
                             class="login-form"
                             onsubmit="app.submitQQLogin(event)"
                         >
-                            <label class="login-label" for="qq-input"
-                                >QQ 号</label
-                            >
+                            <label class="login-label" for="qq-input">QQ 号</label>
                             <input
                                 id="qq-input"
-                                class="login-input"
+                                class="text-input"
                                 type="text"
                                 inputmode="numeric"
-                                placeholder="请输入 QQ 号"
+                                placeholder="输入已同步过的 QQ 号"
                                 maxlength="20"
+                                autocomplete="off"
                             />
-                            <button
-                                class="btn btn-primary btn-block"
-                                type="submit"
-                            >
-                                继续进入
+                            <button class="btn btn-primary btn-block" type="submit">
+                                进入档案馆
                             </button>
                         </form>
-                        <p
-                            id="login-input-status"
-                            class="login-input-status hidden"
-                        ></p>
+                        <p id="login-input-status" class="form-hint hidden"></p>
+                        <p class="login-foot-note">
+                            首次使用请先扫码登录并同步，之后可直接用 QQ 号回到档案。
+                        </p>
                     </div>
-                </div>
-                <div class="login-footer">
-                    <p>登录后即可查看并同步当前账号数据</p>
-                </div>
+                </section>
             </div>
         </div>
 
-        <!-- 主页面 -->
+        <!-- ===================== 主页面 ===================== -->
         <div id="main-page" class="page">
-            <!-- 顶部导航 -->
-            <header class="navbar">
-                <div class="navbar-left">
-                    <div class="navbar-brand">
-                        <span class="navbar-logo">Q</span>
-                        <div class="navbar-brand-text">
-                            <span class="navbar-title">QQ 空间回忆</span>
-                            <span class="navbar-subtitle">内容回顾</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="navbar-right">
-                    <div class="user-chip">
-                        <img
-                            id="user-avatar"
-                            class="user-avatar"
-                            src=""
-                            alt=""
-                        />
-                        <div class="user-meta">
-                            <span id="user-name" class="user-name"></span>
-                            <span class="user-caption">已连接账号</span>
-                        </div>
-                    </div>
-                    <button
-                        class="btn btn-outline btn-sm"
-                        onclick="app.logout()"
-                    >
-                        退出
-                    </button>
-                </div>
-            </header>
-
-            <div class="main-content">
-                <!-- 侧边栏 -->
+            <div class="app">
+                <!-- 侧边栏（已隐藏，功能上移至个人中心头部）-->
                 <aside class="sidebar">
-                    <nav class="sidebar-nav">
-                        <a
-                            href="#"
-                            class="nav-item active"
-                            data-view="memories"
-                            onclick="app.switchView('memories', event)"
-                        >
-                            <span class="nav-icon">忆</span>
-                            <span class="nav-text">回忆</span>
-                            <span class="nav-count" id="count-memories"></span>
-                        </a>
-                        <a
-                            href="#"
-                            class="nav-item"
-                            data-view="friends"
-                            onclick="app.switchView('friends', event)"
-                        >
-                            <span class="nav-icon">友</span>
-                            <span class="nav-text">好友</span>
-                            <span class="nav-count" id="count-friends"></span>
-                        </a>
-                    </nav>
-                    <div class="sidebar-status">
-                        <div class="sidebar-status-item">
-                            <span class="sidebar-status-label">全部记录</span>
-                            <span id="sidebar-total" class="sidebar-status-value">0</span>
-                        </div>
-                        <div class="sidebar-status-item">
-                            <span class="sidebar-status-label">同步状态</span>
-                            <span id="sidebar-sync" class="sidebar-status-value">未开始</span>
-                        </div>
-                        <div id="sidebar-sync-hint" class="sidebar-status-hint"></div>
-                        <div id="sidebar-progress" class="sidebar-progress hidden">
-                            <div class="sidebar-progress-track">
-                                <div class="sidebar-progress-bar" id="sidebar-progress-bar" style="width:0%"></div>
+                    <div class="sidebar-top">
+                        <div class="brand brand-sm">
+                            <span class="brand-mark">时</span>
+                            <div class="brand-text">
+                                <span class="brand-name">时光档案馆</span>
+                                <span class="brand-en">Memory Archive</span>
                             </div>
-                            <span id="sidebar-progress-text" class="sidebar-progress-text">准备中</span>
                         </div>
+
+                        <div class="identity">
+                            <img id="user-avatar" class="identity-avatar" src="" alt="" />
+                            <div class="identity-meta">
+                                <span id="user-name" class="identity-name"></span>
+                                <span id="user-qq" class="identity-qq"></span>
+                            </div>
+                            <button
+                                class="icon-btn"
+                                type="button"
+                                title="退出登录"
+                                aria-label="退出登录"
+                                onclick="app.logout()"
+                            >
+                                ⏻
+                            </button>
+                        </div>
+
+                        <nav class="nav">
+                            <button
+                                class="nav-item active"
+                                type="button"
+                                data-view="memories"
+                                onclick="app.switchView('memories', event)"
+                            >
+                                <span class="nav-glyph">卷</span>
+                                <span class="nav-copy">
+                                    <span class="nav-title">回忆时间线</span>
+                                    <span class="nav-sub">说说 · 相册 · 留言 · 互动</span>
+                                </span>
+                                <span id="nav-count-memories" class="nav-count">—</span>
+                            </button>
+                            <button
+                                class="nav-item"
+                                type="button"
+                                data-view="friends"
+                                onclick="app.switchView('friends', event)"
+                            >
+                                <span class="nav-glyph">友</span>
+                                <span class="nav-copy">
+                                    <span class="nav-title">旧友名册</span>
+                                    <span class="nav-sub">好友 · 分组 · 历史联系人</span>
+                                </span>
+                                <span id="nav-count-friends" class="nav-count">—</span>
+                            </button>
+                            <button
+                                class="nav-item"
+                                type="button"
+                                data-view="onthisday"
+                                onclick="app.switchView('onthisday', event)"
+                            >
+                                <span class="nav-glyph">忆</span>
+                                <span class="nav-copy">
+                                    <span class="nav-title">那年今日</span>
+                                    <span class="nav-sub">历史上的同月同日</span>
+                                </span>
+                                <span id="nav-count-onthisday" class="nav-count">—</span>
+                            </button>
+                        </nav>
                     </div>
-                    <div class="sidebar-footer">
+
+                    <div class="sidebar-bottom">
+                        <div class="sync-box">
+                            <div class="sync-row">
+                                <span class="sync-label">档案同步</span>
+                                <span id="sync-state" class="sync-state">待同步</span>
+                            </div>
+                            <p id="sync-hint" class="sync-hint">
+                                从 QQ 空间拉取并整理你的历史数据
+                            </p>
+                            <div id="sync-progress" class="sync-progress hidden">
+                                <div class="progress-track">
+                                    <div
+                                        id="sync-progress-bar"
+                                        class="progress-bar"
+                                        style="width: 0%"
+                                    ></div>
+                                </div>
+                                <span id="sync-progress-text" class="progress-text">准备中</span>
+                                <div id="sync-controls" class="hidden" style="margin-top: 8px;">
+                                    <button id="btn-sync-toggle" class="btn btn-ghost btn-sm" type="button" data-action="pause" onclick="app.toggleSyncPause()" style="margin-right: 6px;">暂停</button>
+                                    <button class="btn btn-ghost btn-sm" type="button" onclick="app.cancelSync()">取消</button>
+                                </div>
+                            </div>
+                        </div>
                         <button
                             id="btn-sync"
                             class="btn btn-primary btn-block"
+                            type="button"
                             onclick="app.showSyncDialog()"
                         >
-                            同步数据
+                            同步档案
+                        </button>
+                        <button
+                            class="btn btn-ghost btn-block"
+                            type="button"
+                            style="margin-top: 8px;"
+                            onclick="app.openReport()"
+                        >
+                            年度纪念卡
+                        </button>
+                        <button
+                            class="btn btn-ghost btn-block"
+                            type="button"
+                            style="margin-top: 8px;"
+                            onclick="app.openPrivacy()"
+                        >
+                            数据与隐私
                         </button>
                     </div>
                 </aside>
 
-                <!-- 内容区域 -->
-                <main class="content">
-                    <section class="content-surface">
-                        <div class="content-top">
-                            <div class="content-head">
-                                <div>
-                                    <p id="content-kicker" class="content-kicker">回忆时间线</p>
-                                    <h2 id="content-title" class="content-title">完整回忆</h2>
-                                    <p id="content-description" class="content-description">
-                                        按时间线回看已归档的 QQ 空间内容与历史痕迹
-                                    </p>
-                                </div>
-                                <div id="memory-filters" class="memory-filters">
-                                    <button class="filter-chip active" data-filter="all" onclick="app.switchMemoryFilter('all', event)">全部</button>
-                                    <button class="filter-chip" data-filter="activity" onclick="app.switchMemoryFilter('activity', event)">历史动态</button>
-                                    <button class="filter-chip" data-filter="talk" onclick="app.switchMemoryFilter('talk', event)">说说</button>
-                                    <button class="filter-chip" data-filter="blog" onclick="app.switchMemoryFilter('blog', event)">日志</button>
-                                    <button class="filter-chip" data-filter="album" onclick="app.switchMemoryFilter('album', event)">相册</button>
-                                    <button class="filter-chip" data-filter="message" onclick="app.switchMemoryFilter('message', event)">留言</button>
-                                    <button class="filter-chip" data-filter="comment" onclick="app.switchMemoryFilter('comment', event)">评论</button>
-                                    <button class="filter-chip" data-filter="visitor" onclick="app.switchMemoryFilter('visitor', event)">访客</button>
-                                    <button class="filter-chip" data-filter="video" onclick="app.switchMemoryFilter('video', event)">视频</button>
-                                    <button class="filter-chip" data-filter="like" onclick="app.switchMemoryFilter('like', event)">点赞</button>
-                                    <button class="filter-chip" data-filter="mention" onclick="app.switchMemoryFilter('mention', event)">提及</button>
-                                    <button class="filter-chip" data-filter="share" onclick="app.switchMemoryFilter('share', event)">转发</button>
-                                    <button class="filter-chip" data-filter="favorite" onclick="app.switchMemoryFilter('favorite', event)">收藏</button>
-                                    <button class="filter-chip" data-filter="diary" onclick="app.switchMemoryFilter('diary', event)">日记</button>
-                                </div>
+                <!-- 主内容 -->
+                <main class="workspace">
+                    <header class="workspace-head">
+                        <div class="head-copy">
+                            <p id="content-kicker" class="kicker">回忆时间线</p>
+                            <h1 id="content-title" class="head-title">完整档案</h1>
+                            <p id="content-description" class="head-desc">
+                                按时间回看 QQ 空间的内容、互动与旧日痕迹
+                            </p>
+                        </div>
+
+                        <div class="head-tools">
+                            <div id="memory-search-field" class="search-field">
+                                <span class="search-icon" aria-hidden="true">⌕</span>
+                                <input
+                                    id="memory-search"
+                                    class="text-input search-input"
+                                    type="search"
+                                    placeholder="搜索说说、留言、好友昵称或 QQ…"
+                                    oninput="app.handleMemorySearch(event)"
+                                    onkeydown="app.handleUnifiedSearchKey(event)"
+                                />
+                            </div>
+                            <div id="memory-filters" class="chips">
+                                <button class="chip active" data-filter="all" onclick="app.switchMemoryFilter('all', event)">全部</button>
+                                <button class="chip" data-filter="talk" onclick="app.switchMemoryFilter('talk', event)">说说</button>
+                                <button class="chip" data-filter="blog" onclick="app.switchMemoryFilter('blog', event)">日志</button>
+                                <button class="chip" data-filter="album" onclick="app.switchMemoryFilter('album', event)">相册</button>
+                                <button class="chip" data-filter="message" onclick="app.switchMemoryFilter('message', event)">留言</button>
+                                <button class="chip" data-filter="video" onclick="app.switchMemoryFilter('video', event)">视频</button>
+                                <button class="chip" data-filter="favorite" onclick="app.switchMemoryFilter('favorite', event)">收藏</button>
+                                <button class="chip" data-filter="diary" onclick="app.switchMemoryFilter('diary', event)">日记</button>
+                                <button class="chip" data-filter="interact" onclick="app.switchMemoryFilter('interact', event)">互动</button>
                             </div>
                             <div id="friend-toolbar" class="friend-toolbar hidden">
-                                <input
-                                    id="friend-search"
-                                    class="friend-search"
-                                    type="search"
-                                    placeholder="搜索好友昵称、备注或 QQ"
-                                    oninput="app.handleFriendSearch(event)"
-                                />
-                                <div id="friend-group-filters" class="friend-filter-group"></div>
+                                <div class="search-field">
+                                    <span class="search-icon" aria-hidden="true">⌕</span>
+                                    <input
+                                        id="friend-search"
+                                        class="text-input search-input"
+                                        type="search"
+                                        placeholder="搜索昵称、备注或 QQ 号"
+                                        oninput="app.handleFriendSearch(event)"
+                                    />
+                                </div>
+                                <div id="friend-status-filters" class="chips">
+                                    <button class="chip active" data-friend-filter="all" onclick="app.switchFriendFilter('all', event)">全部联系人</button>
+                                    <button class="chip" data-friend-filter="current" onclick="app.switchFriendFilter('current', event)">当前好友</button>
+                                    <button class="chip" data-friend-filter="historical" onclick="app.switchFriendFilter('historical', event)">历史联系人</button>
+                                </div>
+                                <div id="friend-group-filters" class="chips"></div>
                             </div>
                         </div>
-                        <div id="content-scroll" class="content-scroll">
+                    </header>
 
-                            <!-- 空状态 -->
-                            <div id="empty-state" class="empty-state hidden">
-                                <div class="empty-icon">Q</div>
-                                <h2 id="empty-title">还没有数据</h2>
-                                <p id="empty-description">
-                                    当前没有可展示的数据，请先执行同步
-                                </p>
-                                <button
-                                    class="btn btn-primary btn-lg"
-                                    onclick="app.showSyncDialog()"
-                                >
-                                    开始同步
+                    <div id="content-scroll" class="content-scroll">
+                        <div id="empty-state" class="empty-state hidden">
+                            <div class="empty-mark">时</div>
+                            <h2 id="empty-title">档案还是空的</h2>
+                            <p id="empty-description">
+                                还没有可展示的数据，先同步一次，让回忆重新归档
+                            </p>
+                            <button
+                                class="btn btn-primary btn-lg"
+                                type="button"
+                                onclick="app.showSyncDialog()"
+                            >
+                                立即同步
+                            </button>
+                        </div>
+
+                        <div id="loading-state" class="loading-state hidden">
+                            <div class="spinner spinner-lg"></div>
+                            <p>正在整理档案…</p>
+                        </div>
+
+                        <div id="album-detail" class="album-detail hidden">
+                            <div class="album-detail-head">
+                                <button class="btn btn-ghost btn-sm" type="button" onclick="app.closeAlbumDetail()">
+                                    ← 返回
                                 </button>
-                            </div>
-
-                            <!-- 相册照片详情 -->
-                            <div id="album-detail" class="album-detail hidden">
-                                <div class="album-detail-header">
-                                    <button class="btn btn-outline btn-sm" onclick="app.closeAlbumDetail()">← 返回相册</button>
+                                <div class="album-detail-titles">
                                     <h3 id="album-detail-title">相册名称</h3>
                                     <span id="album-detail-count" class="album-detail-count">0 张照片</span>
                                 </div>
-                                <div id="album-photos" class="album-photos-grid"></div>
-                                <div id="album-load-more" class="load-more hidden">
-                                    <button class="btn btn-outline" onclick="app.loadMorePhotos()">加载更多</button>
-                                </div>
                             </div>
-
-                            <!-- 时间线 -->
-                            <div id="timeline" class="timeline hidden"></div>
-                            <div id="load-more" class="load-more hidden">
-                                <button
-                                    class="btn btn-outline"
-                                    onclick="app.loadMore()"
-                                >
-                                    加载更多
+                            <div id="album-photos" class="photo-grid"></div>
+                            <div id="album-load-more" class="load-more hidden">
+                                <button class="btn btn-ghost" type="button" onclick="app.loadMorePhotos()">
+                                    加载更多照片
                                 </button>
                             </div>
-
-                            <!-- 好友 -->
-                            <div id="friends-view" class="friends-view hidden">
-                                <div id="friend-groups" class="friend-groups"></div>
-                            </div>
                         </div>
-                    </section>
+
+                        <div id="timeline" class="timeline hidden"></div>
+                        <div id="load-more" class="load-more hidden">
+                            <button class="btn btn-ghost" type="button" onclick="app.loadMore()">
+                                加载更多
+                            </button>
+                        </div>
+
+                        <div id="friends-view" class="friends-view hidden">
+                            <div id="friend-groups" class="friend-groups"></div>
+                        </div>
+                    </div>
                 </main>
+
+                <!-- 右侧档案概览 -->
+                <aside id="rail" class="rail">
+                    <div class="widget" id="w-onthisday">
+                        <h3>那年今日 <small id="onthisday-date"></small></h3>
+                        <div id="onthisday-body" class="onthis">正在回看…</div>
+                    </div>
+                    <div class="widget">
+                        <h3>最近访客 <small id="visitor-total"></small></h3>
+                        <div id="visitor-list" class="visitors"></div>
+                    </div>
+                    <div class="rail-card rail-hero">
+                        <p id="rail-kicker" class="kicker kicker-light">档案概览</p>
+                        <div class="rail-total-wrap">
+                            <strong id="rail-total" class="rail-total">0</strong>
+                            <span id="rail-total-label" class="rail-total-label">条回忆</span>
+                        </div>
+                    </div>
+
+                    <div class="rail-card">
+                        <h3 id="rail-breakdown-title" class="rail-card-title">内容构成</h3>
+                        <div id="rail-stats" class="rail-stats">
+                            <p class="rail-placeholder">同步后这里会显示各类内容的占比</p>
+                        </div>
+                    </div>
+
+                    <div id="rail-years-card" class="rail-card">
+                        <h3 class="rail-card-title">回忆密度</h3>
+                        <div id="rail-years" class="rail-years">
+                            <p class="rail-placeholder">按年份统计你留下的痕迹</p>
+                        </div>
+                    </div>
+
+                </aside>
             </div>
         </div>
 
-        <!-- 同步确认弹窗 -->
+        <!-- ===================== 同步弹窗 ===================== -->
         <div id="sync-modal" class="modal hidden">
-            <div
-                class="modal-overlay"
-                onclick="app.closeModal('sync-modal')"
-            ></div>
-            <div class="modal-content">
+            <div class="modal-overlay" onclick="app.closeModal('sync-modal')"></div>
+            <div class="modal-content" role="dialog" aria-modal="true">
                 <div class="modal-header">
-                    <h3>开始同步</h3>
+                    <p class="kicker">Synchronize</p>
+                    <h3>开始同步档案</h3>
                 </div>
                 <div class="modal-body">
-                    <p>
-                        同步会重新拉取当前账号下可访问的历史内容、动态归档与好友数据，包括：
-                    </p>
-                    <ul>
+                    <p>同步会重新拉取当前账号可访问的历史内容，并整理成可翻阅的档案：</p>
+                    <ul class="modal-list">
                         <li>说说、日志、相册、留言板等现有内容</li>
                         <li>历史动态归档、已删内容痕迹与回忆时间线</li>
                         <li>当前好友、分组、特别关心与历史互动联系人</li>
                     </ul>
-                    <p class="text-warning">
-                        同步可能持续数分钟，建议保持页面开启并避免重复操作
+                    <p class="note-warning">
+                        同步可能持续数分钟，建议保持页面开启并避免重复操作。
                     </p>
                 </div>
                 <div class="modal-footer">
-                    <button
-                        class="btn btn-outline"
-                        onclick="app.closeModal('sync-modal')"
-                    >
+                    <button class="btn btn-ghost" type="button" onclick="app.closeModal('sync-modal')">
                         取消
                     </button>
                     <button
                         id="btn-sync-confirm"
                         class="btn btn-primary"
+                        type="button"
                         onclick="app.confirmSync()"
                     >
                         确认同步
@@ -344,12 +446,56 @@
             </div>
         </div>
 
-        <!-- 图片灯箱 -->
+        <!-- ===================== 数据与隐私 ===================== -->
+        <div id="privacy-modal" class="modal hidden">
+            <div class="modal-overlay" onclick="app.closeModal('privacy-modal')"></div>
+            <div class="modal-content" role="dialog" aria-modal="true">
+                <div class="modal-header">
+                    <p class="kicker">Privacy</p>
+                    <h3>数据与隐私</h3>
+                </div>
+                <div class="modal-body">
+                    <p>你的全部回忆与图片只保存在这台电脑，不经任何服务器，无埋点、无上报。</p>
+                    <ul class="modal-list">
+                        <li>数据库：<span id="privacy-db-path" style="word-break: break-all;">—</span></li>
+                        <li>媒体目录：<span id="privacy-media-dir" style="word-break: break-all;">—</span></li>
+                        <li>本地媒体：<span id="privacy-media-stat">—</span></li>
+                    </ul>
+                    <p id="privacy-badge" class="note-warning hidden">🔒 图片已全部本地化，浏览无需联网</p>
+                    <p class="note-warning">「彻底删除」会清空本机上该账号的全部数据、图片与登录态，且不可恢复。</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-ghost" type="button" onclick="app.exportArchive()">导出纪念册</button>
+                    <button class="btn btn-ghost" type="button" onclick="app.backfillMedia()">重新下载 / 回填</button>
+                    <button class="btn btn-ghost" type="button" onclick="app.confirmDeleteAll()">彻底删除我的数据</button>
+                    <button class="btn btn-primary" type="button" onclick="app.closeModal('privacy-modal')">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===================== 年度纪念卡 ===================== -->
+        <div id="report-modal" class="modal hidden">
+            <div class="modal-overlay" onclick="app.closeModal('report-modal')"></div>
+            <div class="modal-content" role="dialog" aria-modal="true">
+                <div class="modal-header">
+                    <p class="kicker">Memory Card</p>
+                    <h3>青春纪念卡</h3>
+                </div>
+                <div class="modal-body" id="report-body">
+                    <p class="rail-placeholder">正在生成…</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" type="button" onclick="app.closeModal('report-modal')">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===================== 灯箱 ===================== -->
         <div id="lightbox" class="lightbox hidden" onclick="app.closeLightbox(event)">
-            <div class="lightbox-close" onclick="app.closeLightbox()">&times;</div>
-            <button class="lightbox-arrow lightbox-prev" onclick="app.lightboxPrev(event)">&#8249;</button>
-            <img id="lightbox-img" class="lightbox-img" src="" alt="">
-            <button class="lightbox-arrow lightbox-next" onclick="app.lightboxNext(event)">&#8250;</button>
+            <button class="lightbox-close" type="button" onclick="app.closeLightbox()" aria-label="关闭">&times;</button>
+            <button class="lightbox-arrow lightbox-prev" type="button" onclick="app.lightboxPrev(event)" aria-label="上一张">&#8249;</button>
+            <img id="lightbox-img" class="lightbox-img" src="" alt="" />
+            <button class="lightbox-arrow lightbox-next" type="button" onclick="app.lightboxNext(event)" aria-label="下一张">&#8250;</button>
             <div id="lightbox-counter" class="lightbox-counter"></div>
         </div>
 

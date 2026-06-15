@@ -12,7 +12,11 @@ type Talk struct {
 	Videos       string    `gorm:"type:text" json:"videos"` // JSON 数组
 	Location     string    `json:"location"`
 	Device       string    `json:"device"`
+	SourceName   string    `json:"source_name"`
+	SourceID     string    `json:"source_id"`
+	AppID        int       `gorm:"index" json:"app_id"`
 	IsDeleted    bool      `gorm:"default:false" json:"is_deleted"`
+	IsSpam       bool      `gorm:"index;default:false" json:"is_spam"` // 游戏自动说说 / 广告 / 微信号等，默认在回忆里隐藏
 	LikeCount    int       `json:"like_count"`
 	CommentCount int       `json:"comment_count"`
 	ShareCount   int       `json:"share_count"`

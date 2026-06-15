@@ -8,12 +8,14 @@ import (
 
 // AlbumItem 相册数据项
 type AlbumItem struct {
-	AlbumID     string
-	Name        string
-	Description string
-	CoverURL    string
-	PhotoCount  int
-	CreateTime  time.Time
+	AlbumID        string
+	Name           string
+	Description    string
+	CoverURL       string
+	PhotoCount     int
+	Privacy        int
+	CreateTime     time.Time
+	LastUploadTime time.Time
 }
 
 // PhotoItem 照片数据项
@@ -24,6 +26,8 @@ type PhotoItem struct {
 	Description string
 	URL         string
 	ThumbURL    string
+	OwnerQQ     string
+	OwnerName   string
 	Width       int
 	Height      int
 	PhotoTime   time.Time
@@ -88,6 +92,7 @@ func (c *Client) GetAlbums() ([]AlbumItem, error) {
 			Description: cleanPlainText(getStringValue(albumMap, "desc")),
 			CoverURL:    getStringValue(albumMap, "pre"),
 			PhotoCount:  getIntValue(albumMap, "total"),
+			Privacy:     getIntValue(albumMap, "priv"),
 		}
 		if looksLikeSystemAlbum(album.Name, getStringValue(albumMap, "desc")) {
 			continue
@@ -95,6 +100,14 @@ func (c *Client) GetAlbums() ([]AlbumItem, error) {
 
 		if createTime := getInt64Value(albumMap, "createtime"); createTime > 0 {
 			album.CreateTime = time.Unix(createTime, 0)
+		}
+		if lastUploadTime := firstPositiveInt64(
+			getInt64Value(albumMap, "lastuploadtime"),
+			getInt64Value(albumMap, "lastUploadTime"),
+			getInt64Value(albumMap, "modifytime"),
+			getInt64Value(albumMap, "uploadtime"),
+		); lastUploadTime > 0 {
+			album.LastUploadTime = time.Unix(lastUploadTime, 0)
 		}
 
 		albums = append(albums, album)
@@ -155,6 +168,8 @@ func (c *Client) GetPhotos(albumID string, offset, limit int) ([]PhotoItem, erro
 			Description: cleanPlainText(getStringValue(photoMap, "desc")),
 			URL:         getStringValue(photoMap, "url"),
 			ThumbURL:    getStringValue(photoMap, "pre"),
+			OwnerQQ:     getNumericString(photoMap, "owner_uin"),
+			OwnerName:   cleanPlainText(getStringValue(photoMap, "owner_name")),
 			Width:       getIntValue(photoMap, "width"),
 			Height:      getIntValue(photoMap, "height"),
 		}

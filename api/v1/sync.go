@@ -28,3 +28,35 @@ func GetSyncProgress(c *gin.Context) {
 	}
 	response.Success(c, data)
 }
+
+func PauseSync(c *gin.Context) {
+	data, err := service.PauseSync()
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	response.Success(c, data)
+}
+
+func ResumeSync(c *gin.Context) {
+	var req dto.SyncRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	req.Resume = true
+	data, err := service.StartSync(c.Request.Context(), req)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	response.Success(c, data)
+}
+
+func CancelSync(c *gin.Context) {
+	data, err := service.CancelSync()
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	response.Success(c, data)
+}

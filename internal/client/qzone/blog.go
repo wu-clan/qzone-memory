@@ -22,6 +22,7 @@ type BlogItem struct {
 	CommentCount int
 	ReadCount    int
 	PublishTime  time.Time
+	ModifyTime   time.Time
 }
 
 // GetBlogList 获取日志列表
@@ -85,6 +86,10 @@ func (c *Client) GetBlogList(offset, limit int) ([]BlogItem, error) {
 			ReadCount:    getIntValue(blogMap, "readCount"),
 			LikeCount:    getIntValue(blogMap, "likeCount"),
 			CommentCount: getIntValue(blogMap, "commentNum"),
+		}
+
+		if modifyTime := getInt64Value(blogMap, "lastModifyTime"); modifyTime > 0 {
+			blog.ModifyTime = time.Unix(modifyTime, 0)
 		}
 
 		if pubTime, err := time.ParseInLocation("2006-01-02 15:04", getStringValue(blogMap, "pubTime"), time.Local); err == nil {

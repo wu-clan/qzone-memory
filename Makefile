@@ -1,4 +1,4 @@
-.PHONY: build run clean test help dev reload deps fmt lint
+.PHONY: build run clean test help deps fmt lint release release-all
 
 # 变量定义
 BINARY_NAME=qzone-memory
@@ -24,8 +24,6 @@ help:
 	@echo "  make run      - 运行项目"
 	@echo "  make clean    - 清理编译文件"
 	@echo "  make test     - 运行测试"
-	@echo "  make dev      - 开发模式"
-	@echo "  make reload   - Air 热重启开发模式"
 	@echo "  make deps     - 安装依赖"
 	@echo "  make fmt      - 格式化代码"
 	@echo "  make lint     - 代码检查"
@@ -41,16 +39,6 @@ build:
 run: build
 	@echo "启动服务..."
 	@./$(BINARY_NAME)$(BINARY_EXT)
-
-# 开发模式(Air 热重启)
-reload:
-	@echo "Air 热重启开发模式启动..."
-	@go tool air -c .air.toml
-
-# 开发模式
-dev:
-	@echo "开发模式启动..."
-	@go run $(MAIN_FILE)
 
 # 清理编译文件
 clean:
@@ -82,3 +70,15 @@ lint:
 	@echo "代码检查..."
 	@go vet ./...
 	@echo "检查完成"
+
+# 构建发布版（当前平台，精简体积，输出到 dist/）
+release:
+	@echo "构建发布版..."
+	@mkdir -p dist
+	@go build -trimpath -ldflags "-s -w" -o dist/$(BINARY_NAME)$(BINARY_EXT) $(MAIN_FILE)
+	@cp -r config dist/ 2>/dev/null || true
+	@echo "完成：dist/$(BINARY_NAME)$(BINARY_EXT)（双击运行，会自动打开浏览器）"
+
+# 跨平台构建（需对应平台的 CGO 工具链，缺失会自动跳过）
+release-all:
+	@bash scripts/build-all.sh

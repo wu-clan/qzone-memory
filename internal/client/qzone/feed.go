@@ -18,6 +18,8 @@ import (
 type FeedItem struct {
 	FeedID       string
 	FeedType     string // "talk"/"blog"/"photo"/"share"/"other"
+	AppID        int
+	RawType      string
 	ObjectID     string
 	Title        string
 	Content      string
@@ -25,6 +27,10 @@ type FeedItem struct {
 	AuthorQQ     string
 	AuthorName   string
 	Images       []string
+	SourceName   string
+	Device       string
+	Location     string
+	URL          string
 	LikeCount    int
 	CommentCount int
 	ShareCount   int
@@ -116,16 +122,27 @@ func (c *Client) parseFeedResponse(data []byte) ([]FeedItem, error) {
 		}
 
 		appID := getIntValue(feedMap, "appid")
+		feed.AppID = appID
+		feed.RawType = pickFirstNonEmpty(getStringValue(feedMap, "type"), getStringValue(feedMap, "subtype"), getStringValue(feedMap, "feed_type"))
+		feed.SourceName = cleanText(pickFirstNonEmpty(getStringValue(feedMap, "source_name"), getStringValue(feedMap, "sourceName"), getStringValue(feedMap, "from")))
+		feed.Device = cleanText(pickFirstNonEmpty(getStringValue(feedMap, "device"), getStringValue(feedMap, "source_name")))
+		feed.URL = pickFirstNonEmpty(getStringValue(feedMap, "url"), getStringValue(feedMap, "link"), getStringValue(feedMap, "actionurl"), getStringValue(feedMap, "actionUrl"))
+		if lbs := getMapValue(feedMap, "lbs"); lbs != nil {
+			feed.Location = cleanText(pickFirstNonEmpty(getStringValue(lbs, "idname"), getStringValue(lbs, "name"), getStringValue(lbs, "addr")))
+		}
 		switch appID {
 		case 311:
 			feed.FeedType = "talk"
-		case 4:
+		case 334:
+			feed.FeedType = "message" // 留言板
+		case 4, 202:
 			feed.FeedType = "blog"
 		case 2:
 			feed.FeedType = "photo"
 		case 1:
 			feed.FeedType = "share"
 		default:
+			// 217 等互动通知归 other，再由 inferType 按 state 文本细分
 			feed.FeedType = "other"
 		}
 
@@ -234,6 +251,9 @@ func (f *FeedItem) enrichFromHTML() {
 		}
 		if f.ObjectID == "" {
 			f.ObjectID = extractObjectID(href)
+		}
+		if f.URL == "" {
+			f.URL = href
 		}
 		if f.Title == "" {
 			text := cleanText(s.Text())

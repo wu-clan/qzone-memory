@@ -41,6 +41,6 @@ func BatchUpsertComments(comments []*model.Comment) error {
 	}
 	return database.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "comment_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"author_qq", "author_name", "author_avatar", "content", "reply_to_qq", "reply_to_name", "comment_time", "is_deleted", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"target_type", "target_id", "author_qq", "author_name", "author_avatar", "content", "reply_to_qq", "reply_to_name", "reply_to_avatar", "floor", "comment_time", "is_deleted", "updated_at"}),
 	}).Create(&comments).Error
 }

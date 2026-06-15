@@ -8,6 +8,8 @@ type Activity struct {
 	UserQQ       string    `gorm:"index;not null" json:"user_qq"`
 	FeedID       string    `gorm:"uniqueIndex;not null" json:"feed_id"`
 	FeedType     string    `gorm:"index;not null" json:"feed_type"`
+	AppID        int       `gorm:"index" json:"app_id"`
+	RawType      string    `gorm:"index" json:"raw_type"`
 	ObjectID     string    `gorm:"index" json:"object_id"`
 	Title        string    `json:"title"`
 	Content      string    `gorm:"type:text" json:"content"`
@@ -15,6 +17,10 @@ type Activity struct {
 	AuthorQQ     string    `gorm:"index" json:"author_qq"`
 	AuthorName   string    `json:"author_name"`
 	Images       string    `gorm:"type:text" json:"images"`
+	SourceName   string    `json:"source_name"`
+	Device       string    `json:"device"`
+	Location     string    `json:"location"`
+	URL          string    `gorm:"type:text" json:"url"`
 	LikeCount    int       `json:"like_count"`
 	CommentCount int       `json:"comment_count"`
 	ShareCount   int       `json:"share_count"`

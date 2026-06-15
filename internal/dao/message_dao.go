@@ -41,6 +41,6 @@ func BatchUpsertMessages(messages []*model.Message) error {
 	}
 	return database.DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "message_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"author_qq", "author_name", "author_avatar", "content", "reply_content", "message_time", "is_deleted", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"author_qq", "author_name", "author_avatar", "content", "reply_content", "reply_author_qq", "reply_author_name", "reply_author_avatar", "reply_time", "message_time", "is_deleted", "updated_at"}),
 	}).Create(&messages).Error
 }

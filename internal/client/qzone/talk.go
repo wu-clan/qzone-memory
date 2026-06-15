@@ -18,6 +18,9 @@ type TalkItem struct {
 	Videos       []string
 	Location     string
 	Device       string
+	SourceName   string
+	SourceID     string
+	AppID        int
 	LikeCount    int
 	CommentCount int
 	ShareCount   int
@@ -97,8 +100,11 @@ func (c *Client) GetTalks(offset, limit int) ([]TalkItem, error) {
 		}
 
 		talk := TalkItem{
-			TalkID:  getStringValue(msg, "tid"),
-			Content: cleanPlainText(getStringValue(msg, "content")),
+			TalkID:     getStringValue(msg, "tid"),
+			Content:    cleanPlainText(getStringValue(msg, "content")),
+			SourceID:   pickFirstNonEmpty(getStringValue(msg, "source_id"), getNumericString(msg, "source_id")),
+			AppID:      getIntValue(msg, "appid"),
+			SourceName: cleanPlainText(getStringValue(msg, "source_name")),
 		}
 
 		// 解析发布时间（优先 created_time，兼容 createTime）
@@ -143,7 +149,7 @@ func (c *Client) GetTalks(offset, limit int) ([]TalkItem, error) {
 		}
 
 		// 解析来源设备
-		talk.Device = getStringValue(msg, "source_name")
+		talk.Device = talk.SourceName
 
 		// 解析统计数据
 		talk.LikeCount = getIntValue(msg, "likeCount")

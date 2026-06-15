@@ -13,11 +13,12 @@ var ErrCookieExpired = fmt.Errorf("Cookie 已过期，请重新登录")
 
 // ShareItem 转发数据项
 type ShareItem struct {
-	ShareID    string
-	SharerQQ   string
-	SharerName string
-	Comment    string
-	ShareTime  time.Time
+	ShareID      string
+	SharerQQ     string
+	SharerName   string
+	SharerAvatar string
+	Comment      string
+	ShareTime    time.Time
 }
 
 // GetShares 获取转发列表
@@ -55,10 +56,11 @@ func (c *Client) GetShares(targetType, targetID string, offset, limit int) ([]Sh
 		}
 
 		share := ShareItem{
-			ShareID:    fmt.Sprintf("%s_%d_%d", targetID, offset, i),
-			SharerQQ:   fmt.Sprintf("%d", getInt64Value(fwdMap, "uin")),
-			SharerName: getStringValue(fwdMap, "name"),
-			Comment:    getStringValue(fwdMap, "content"),
+			ShareID:      fmt.Sprintf("%s_%d_%d", targetID, offset, i),
+			SharerQQ:     fmt.Sprintf("%d", getInt64Value(fwdMap, "uin")),
+			SharerName:   getStringValue(fwdMap, "name"),
+			SharerAvatar: getStringValue(fwdMap, "portrait"),
+			Comment:      getStringValue(fwdMap, "content"),
 		}
 
 		if shareTime := getInt64Value(fwdMap, "createTime"); shareTime > 0 {

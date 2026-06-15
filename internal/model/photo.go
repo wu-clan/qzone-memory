@@ -12,6 +12,8 @@ type Photo struct {
 	Description string    `json:"description"`
 	URL         string    `json:"url"`
 	ThumbURL    string    `json:"thumb_url"`
+	OwnerQQ     string    `gorm:"index" json:"owner_qq"`
+	OwnerName   string    `json:"owner_name"`
 	Width       int       `json:"width"`
 	Height      int       `json:"height"`
 	IsDeleted   bool      `gorm:"default:false" json:"is_deleted"`
